@@ -135,10 +135,10 @@ export const refresh = async (req, res) => {
 
 // ── Google callback ───────────────────────────────────────────────────────────
 export const googleCallback = async (req, res) => {
+  // Strip any trailing slash from CLIENT_URL so redirects don't become //path
+  const clientUrl = (process.env.CLIENT_URL || '').replace(/\/+$/, '');
   try {
     const user = req.user;
-    // Normalise CLIENT_URL — strip any trailing slash added in .env
-    const clientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
     if (!user) return res.redirect(`${clientUrl}/login?error=google_auth_failed`);
 
     const { accessToken, refreshToken } = generateTokens(user);
@@ -149,8 +149,8 @@ export const googleCallback = async (req, res) => {
     res.redirect(`${clientUrl}/auth/callback#token=${accessToken}`);
   } catch (error) {
     console.error('Google callback error:', error);
-    const clientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
-    res.redirect(`${clientUrl}/login?error=auth_failed`);
+    const clientUrl2 = (process.env.CLIENT_URL || '').replace(/\/+$/, '');
+    res.redirect(`${clientUrl2}/login?error=auth_failed`);
   }
 };
 
