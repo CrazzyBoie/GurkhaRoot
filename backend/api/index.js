@@ -3,6 +3,10 @@
 // that is a standard Node.js http request handler or an Express app.
 
 import app from './app.js';
+import { createServer } from 'http';
 
-// Export the Express app directly. Vercel wraps it automatically.
-export default app;
+// @vercel/node expects module.exports (CJS interop)
+// Use a named handler wrapper so Vercel sees a function, not an Express app
+export default function handler(req, res) {
+  app(req, res);
+}
