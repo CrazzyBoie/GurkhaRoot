@@ -34,10 +34,22 @@ const app = express();
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // Strip trailing slash from CLIENT_URL to avoid CORS / redirect mismatches
-const clientOrigin = (process.env.CLIENT_URL || 'http://gurkharoot.vercel.app').replace(/\/$/, '');
+const clientOrigin = (process.env.CLIENT_URL || 'https://gurkharoot.vercel.app').replace(/\/$/, '');
+
+// Accept both http and https variants so a wrong env var doesn't silently break things
+const allowedOrigins = new Set([
+  clientOrigin,
+  clientOrigin.replace(/^http:\/\//, 'https://'),
+  clientOrigin.replace(/^https:\/\//, 'http://'),
+]);
 
 app.use(cors({
-  origin: clientOrigin,
+  origin: (origin, callback) => {
+    // Allow server-to-server / curl / Postman (no Origin header)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.has(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin "${origin}" not allowed`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
