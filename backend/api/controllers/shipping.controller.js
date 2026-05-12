@@ -8,7 +8,10 @@ export const getShippingCost = async (req, res) => {
     if (!country) return res.status(400).json({ message: 'Country is required' });
     const cost = await utilGetCost(country, method);
     res.json({ country, method, cost, label: cost === 0 ? 'Free' : `$${cost.toFixed(2)}` });
-  } catch (err) { res.status(500).json({ message: 'Failed to get shipping cost' }); }
+  } catch (err) {
+    console.error('[shipping] getShippingCost:', err.message);
+    res.status(500).json({ message: 'Failed to get shipping cost' });
+  }
 };
 
 export const getShippingMethods = async (req, res) => {
@@ -17,7 +20,10 @@ export const getShippingMethods = async (req, res) => {
     if (!country) return res.status(400).json({ message: 'Country is required' });
     const methods = await utilGetMethods(country);
     res.json({ country, methods });
-  } catch (err) { res.status(500).json({ message: 'Failed to get shipping methods' }); }
+  } catch (err) {
+    console.error('[shipping] getShippingMethods:', err.message);
+    res.status(500).json({ message: 'Failed to get shipping methods' });
+  }
 };
 
 // ── Admin: Countries ──────────────────────────────────────────────────────────
@@ -28,12 +34,22 @@ export const getCountries = async (req, res) => {
     const countries = [];
     for (const d of snap.docs) {
       const country = { id: d.id, ...d.data() };
-      const mSnap   = await db.collection('shippingMethods').where('countryId', '==', d.id).orderBy('methodId').get();
+      // orderBy('methodId') requires a composite index on (countryId ASC, methodId ASC)
+      // defined in firestore.indexes.json — must be deployed via `firebase deploy --only firestore:indexes`
+      const mSnap   = await db.collection('shippingMethods')
+        .where('countryId', '==', d.id)
+        .orderBy('methodId')
+        .get();
       country.methods = snapToArr(mSnap);
       countries.push(country);
     }
     res.json({ countries });
-  } catch (err) { res.status(500).json({ message: 'Failed to get shipping countries' }); }
+  } catch (err) {
+    console.error('[shipping] getCountries:', err.message);
+    // Surface the real error in dev; mask in prod
+    const detail = process.env.NODE_ENV !== 'production' ? err.message : undefined;
+    res.status(500).json({ message: 'Failed to get shipping countries', detail });
+  }
 };
 
 export const createCountry = async (req, res) => {
@@ -51,7 +67,6 @@ export const createCountry = async (req, res) => {
     const country = { name: name.trim(), code: code.trim().toUpperCase(), baseCost: base, freeThreshold: freeThreshold != null ? parseFloat(freeThreshold) : null, currency: currency.trim().toUpperCase(), active, createdAt: now };
     await db.collection('shippingCountries').doc(id).set(country);
 
-    // Auto-seed three method tiers
     const methods = [
       { methodId: 'standard',  label: 'Standard Shipping',  description: '5–10 business days', cost: base },
       { methodId: 'express',   label: 'Express Shipping',   description: '2–4 business days',  cost: Math.round(base * 1.8 * 100) / 100 },
@@ -67,7 +82,10 @@ export const createCountry = async (req, res) => {
     await batch.commit();
 
     res.status(201).json({ message: 'Country added', country: { id, ...country, methods: methodDocs } });
-  } catch (err) { res.status(500).json({ message: 'Failed to add country' }); }
+  } catch (err) {
+    console.error('[shipping] createCountry:', err.message);
+    res.status(500).json({ message: 'Failed to add country' });
+  }
 };
 
 export const updateCountry = async (req, res) => {
@@ -85,7 +103,10 @@ export const updateCountry = async (req, res) => {
     if (!snap.exists) return res.status(404).json({ message: 'Country not found' });
     await snap.ref.update(data);
     res.json({ message: 'Country updated', country: { id, ...snap.data(), ...data } });
-  } catch (err) { res.status(500).json({ message: 'Failed to update country' }); }
+  } catch (err) {
+    console.error('[shipping] updateCountry:', err.message);
+    res.status(500).json({ message: 'Failed to update country' });
+  }
 };
 
 export const deleteCountry = async (req, res) => {
@@ -98,7 +119,10 @@ export const deleteCountry = async (req, res) => {
     batch.delete(db.collection('shippingCountries').doc(id));
     await batch.commit();
     res.json({ message: 'Country deleted' });
-  } catch (err) { res.status(500).json({ message: 'Failed to delete country' }); }
+  } catch (err) {
+    console.error('[shipping] deleteCountry:', err.message);
+    res.status(500).json({ message: 'Failed to delete country' });
+  }
 };
 
 // ── Admin: Methods ────────────────────────────────────────────────────────────
@@ -114,7 +138,10 @@ export const getAdminMethods = async (req, res) => {
       methods.push(m);
     }
     res.json({ methods });
-  } catch (err) { res.status(500).json({ message: 'Failed to get shipping methods' }); }
+  } catch (err) {
+    console.error('[shipping] getAdminMethods:', err.message);
+    res.status(500).json({ message: 'Failed to get shipping methods' });
+  }
 };
 
 export const updateMethod = async (req, res) => {
@@ -131,5 +158,8 @@ export const updateMethod = async (req, res) => {
     if (!snap.exists) return res.status(404).json({ message: 'Method not found' });
     await snap.ref.update(data);
     res.json({ message: 'Method updated', method: { id, ...snap.data(), ...data } });
-  } catch (err) { res.status(500).json({ message: 'Failed to update method' }); }
+  } catch (err) {
+    console.error('[shipping] updateMethod:', err.message);
+    res.status(500).json({ message: 'Failed to update method' });
+  }
 };
