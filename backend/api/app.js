@@ -6,14 +6,18 @@ import cookieParser from 'cookie-parser';
 import passport from 'passport';
 import rateLimit from 'express-rate-limit';
 
-// ── Eager Firebase init — fail fast with a clear message ──────────────────────
-// This import triggers getDb() which validates credentials immediately.
 import { getDb } from './lib/firebase.js';
+
+// ── DO NOT call process.exit() at module load time in a serverless function.
+// Firebase init is deferred to request time so a missing env var returns a 500,
+// not a crashed function that makes Vercel return its own 404.
+let firebaseReady = false;
 try {
   getDb();
+  firebaseReady = true;
 } catch (err) {
-  console.error('\n[Startup] Firebase init failed — server will not start.\n', err.message, '\n');
-  process.exit(1);
+  console.error('[Startup] Firebase init failed:', err.message);
+  // Do NOT process.exit(1) — let the function stay alive so we can return a 503
 }
 
 import './config/passport.js';
@@ -45,7 +49,6 @@ const allowedOrigins = new Set([
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow server-to-server / curl / Postman (no Origin header)
     if (!origin) return callback(null, true);
     if (allowedOrigins.has(origin)) return callback(null, true);
     callback(new Error(`CORS: origin "${origin}" not allowed`));
@@ -68,10 +71,9 @@ app.use(cookieParser());
 app.use(morgan('dev'));
 app.use(passport.initialize());
 
-// ── Health check (also tests Firebase connectivity) ───────────────────────────
+// ── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
   try {
-    // Lightweight Firestore ping — just checks we can reach the DB
     await getDb().collection('_health').limit(1).get();
     res.json({ status: 'ok', firebase: 'connected', ts: Date.now() });
   } catch (err) {
