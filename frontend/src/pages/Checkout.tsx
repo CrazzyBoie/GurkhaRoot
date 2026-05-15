@@ -189,10 +189,28 @@ export function Checkout() {
 
   const [postcodeLookupStatus, setPostcodeLookupStatus] = useState<'idle' | 'loading' | 'found' | 'notfound'>('idle');
 
-  // Auto-fill state & country when postcode changes
+  // Map dropdown country names to ISO codes used by Zippopotam.us
+  const COUNTRY_TO_ISO: Record<string, string> = {
+    'New Zealand': 'NZ',
+    'Australia': 'AU',
+    'United States': 'US',
+    'United Kingdom': 'GB',
+    'India': 'IN',
+    'Canada': 'CA',
+    'Germany': 'DE',
+    'France': 'FR',
+    'Singapore': 'SG',
+    'Japan': 'JP',
+    'China': 'CN',
+  };
+
+  // Auto-fill state when postcode changes — uses selected country for accurate lookup
   useEffect(() => {
     const postcode = shippingAddress.postalCode.trim();
-    if (postcode.length < 3) {
+    const isoCode = COUNTRY_TO_ISO[shippingAddress.country];
+
+    // Nepal and "Other" have no Zippopotam support — skip silently
+    if (!isoCode || postcode.length < 3) {
       setPostcodeLookupStatus('idle');
       return;
     }
@@ -200,35 +218,16 @@ export function Checkout() {
     const timer = setTimeout(async () => {
       setPostcodeLookupStatus('loading');
       try {
-        const res = await fetch(`https://api.zippopotam.us/${encodeURIComponent(postcode)}`);
+        const res = await fetch(`https://api.zippopotam.us/${isoCode}/${encodeURIComponent(postcode)}`);
         if (!res.ok) throw new Error('not found');
         const data = await res.json();
 
-        const countryName = new Intl.DisplayNames(['en'], { type: 'region' }).of(data['country abbreviation']) || data['country abbreviation'];
         const place = data.places?.[0];
         const stateName = place?.state || '';
-
-        // Map returned country to the options available in the dropdown
-        const countryMap: Record<string, string> = {
-          'New Zealand': 'New Zealand',
-          'Australia': 'Australia',
-          'Nepal': 'Nepal',
-          'United States': 'United States',
-          'United Kingdom': 'United Kingdom',
-          'India': 'India',
-          'Canada': 'Canada',
-          'Germany': 'Germany',
-          'France': 'France',
-          'Singapore': 'Singapore',
-          'Japan': 'Japan',
-          'China': 'China',
-        };
-        const mappedCountry = countryMap[countryName] || 'Other';
 
         setShippingAddress(prev => ({
           ...prev,
           state: stateName,
-          country: mappedCountry,
         }));
         setPostcodeLookupStatus('found');
       } catch {
@@ -237,7 +236,7 @@ export function Checkout() {
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [shippingAddress.postalCode]);
+  }, [shippingAddress.postalCode, shippingAddress.country]);
 
   // Load saved addresses
   useEffect(() => {
@@ -523,7 +522,7 @@ export function Checkout() {
                           <p className="text-xs text-[#888] mt-1">Postcode not recognised — please fill in state &amp; country manually.</p>
                         )}
                         {postcodeLookupStatus === 'found' && (
-                          <p className="text-xs text-green-600 mt-1">State &amp; country auto-filled.</p>
+                          <p className="text-xs text-green-600 mt-1">State auto-filled ✓</p>
                         )}
                       </div>
                       <div>
