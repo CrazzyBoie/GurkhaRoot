@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useParams, useNavigate, Link } from 'react-router-dom';
 import { Filter, Grid3X3, LayoutList, ShoppingCart, X } from 'lucide-react';
 import { useProductStore, useCartStore } from '@/stores';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,6 @@ function ProductCard({ product }: { product: ProductType }) {
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
 
-  // Guard against missing variants (shouldn't happen, but prevents crash)
   const variants = product.variants ?? [];
   const uniqueSizes = [...new Set(variants.map(v => v.size))];
   const uniqueColors = variants.reduce<{ color: string; hex: string }[]>((acc, v) => {
@@ -31,7 +30,6 @@ function ProductCard({ product }: { product: ProductType }) {
     e.preventDefault();
     e.stopPropagation();
     if (isOutOfStock) return;
-    // If only one size and one color, add directly
     if (uniqueSizes.length === 1 && uniqueColors.length === 1) {
       const variant = variants.find(v => v.stock > 0);
       if (variant) {
@@ -81,7 +79,6 @@ function ProductCard({ product }: { product: ProductType }) {
                 </span>
               </div>
             )}
-            {/* Quick Add Button — appears on hover */}
             {!isOutOfStock && (
               <button
                 onClick={handleQuickAdd}
@@ -97,7 +94,6 @@ function ProductCard({ product }: { product: ProductType }) {
             <p className="text-xs text-blue-300/70 uppercase tracking-wider mb-1">{product.category}</p>
             <h3 className="font-medium text-white truncate">{product.name}</h3>
 
-            {/* Size Badges */}
             <div className="flex flex-wrap gap-1 mt-2">
               {uniqueSizes.slice(0, 4).map(size => (
                 <span key={size} className="text-[10px] px-1.5 py-0.5 bg-[#f5f5f0] text-blue-200">
@@ -111,7 +107,6 @@ function ProductCard({ product }: { product: ProductType }) {
               )}
             </div>
 
-            {/* Color Dots */}
             <div className="flex items-center gap-1 mt-2">
               {uniqueColors.slice(0, 5).map((c, i) => (
                 <div
@@ -119,19 +114,18 @@ function ProductCard({ product }: { product: ProductType }) {
                   className="w-4 h-4 rounded-full border border-[#ddd]"
                   style={{ backgroundColor: c.hex }}
                   title={c.color}
-              />
-            ))}
-            {uniqueColors.length > 5 && (
-              <span className="text-[10px] text-blue-300/70">+{uniqueColors.length - 5}</span>
-            )}
-          </div>
+                />
+              ))}
+              {uniqueColors.length > 5 && (
+                <span className="text-[10px] text-blue-300/70">+{uniqueColors.length - 5}</span>
+              )}
+            </div>
 
             <p className="text-[#DC143C] font-semibold mt-3">${product.price.toFixed(2)}</p>
           </CardContent>
         </Card>
       </Link>
 
-      {/* Size/Color picker popover */}
       {showPicker && (
         <div
           className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-white/10 shadow-xl p-4 z-50"
@@ -144,7 +138,6 @@ function ProductCard({ product }: { product: ProductType }) {
             </button>
           </div>
 
-          {/* Size */}
           <div className="mb-3">
             <p className="text-xs text-blue-300/70 mb-1.5 uppercase tracking-wider">Size</p>
             <div className="flex flex-wrap gap-1.5">
@@ -172,7 +165,6 @@ function ProductCard({ product }: { product: ProductType }) {
             </div>
           </div>
 
-          {/* Color */}
           <div className="mb-3">
             <p className="text-xs text-blue-300/70 mb-1.5 uppercase tracking-wider">Color</p>
             <div className="flex flex-wrap gap-2">
@@ -225,77 +217,133 @@ function ProductSkeleton() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shop component
+//
+// Supported clean routes (configure in your router):
+//   /shop                   → all products
+//   /shop/page/:page        → paginated (page 2+)
+//   /featured               → featured products
+//   /new-arrivals           → new arrival products
+//   /search/:query          → search results
+//   /shop/category/:name    → category filter
+//
+// ─────────────────────────────────────────────────────────────────────────────
 export function Shop() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { page: pageParam, query: searchQuery, name: categoryParam } = useParams<{
+    page?: string;
+    query?: string;
+    name?: string;
+  }>();
+
+  // Detect which "mode" we're in based on the current path
+  const pathname = window.location.pathname;
+  const isFeatured  = pathname === '/featured';
+  const isNewArrival = pathname === '/new-arrivals';
+  const isSearch    = pathname.startsWith('/search/');
+  const isCategory  = pathname.startsWith('/shop/category/');
+
+  const currentPage = pageParam ? parseInt(pageParam, 10) : 1;
+
   const { products, categories, pagination, isLoading, fetchProducts, fetchCategories } = useProductStore();
-  
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [priceRange, setPriceRange] = useState([0, 500]);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState('newest');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  const [isFilterOpen, setIsFilterOpen]       = useState(false);
+  const [priceRange, setPriceRange]           = useState([0, 500]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(() =>
+    isCategory && categoryParam ? [decodeURIComponent(categoryParam)] : []
+  );
+  const [selectedSizes, setSelectedSizes]     = useState<string[]>([]);
+  const [sortBy, setSortBy]                   = useState('newest');
+  const [viewMode, setViewMode]               = useState<'grid' | 'list'>('grid');
 
   const sizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 
-  const applyFilters = useCallback(() => {
-    const params: Record<string, string> = {};
-    
-    if (selectedCategories.length > 0) params.category = selectedCategories[0];
-    if (selectedSizes.length > 0) params.size = selectedSizes[0];
-    if (priceRange[0] > 0) params.minPrice = priceRange[0].toString();
-    if (priceRange[1] < 500) params.maxPrice = priceRange[1].toString();
-    if (sortBy) params.sort = sortBy;
-    
-    const searchQuery = searchParams.get('search');
-    if (searchQuery) params.search = searchQuery;
-    
-    const featured = searchParams.get('featured');
-    if (featured === 'true') params.featured = 'true';
-    
-    const newArrival = searchParams.get('newArrival');
-    if (newArrival === 'true') params.newArrival = 'true';
+  // ── Heading subtitle ────────────────────────────────────────────────────────
+  const subtitle = isSearch
+    ? `Search results for "${decodeURIComponent(searchQuery || '')}"`
+    : isFeatured
+    ? 'Featured Products'
+    : isNewArrival
+    ? 'New Arrivals'
+    : isCategory && categoryParam
+    ? decodeURIComponent(categoryParam)
+    : 'All Products';
 
-    setSearchParams(params);
-    fetchProducts(params);
-  }, [selectedCategories, selectedSizes, priceRange, sortBy, searchParams]);
+  // ── Build API params from current route + filters ──────────────────────────
+  const buildParams = useCallback(
+    (overridePage?: number): Record<string, string | number | boolean> => {
+      const params: Record<string, string | number | boolean> = {};
 
+      if (isFeatured)  params.featured   = true;
+      if (isNewArrival) params.newArrival = true;
+      if (isSearch && searchQuery)   params.search   = decodeURIComponent(searchQuery);
+      if (isCategory && categoryParam) params.category = decodeURIComponent(categoryParam);
+
+      if (selectedCategories.length > 0 && !isCategory) params.category = selectedCategories[0];
+      if (selectedSizes.length > 0)  params.size = selectedSizes[0];
+      if (priceRange[0] > 0)         params.minPrice = priceRange[0];
+      if (priceRange[1] < 500)       params.maxPrice = priceRange[1];
+      if (sortBy !== 'newest')       params.sort = sortBy;
+      if (overridePage && overridePage > 1) params.page = overridePage;
+
+      return params;
+    },
+    [isFeatured, isNewArrival, isSearch, isCategory, searchQuery, categoryParam,
+     selectedCategories, selectedSizes, priceRange, sortBy]
+  );
+
+  // ── Initial load ───────────────────────────────────────────────────────────
   useEffect(() => {
     fetchCategories();
-    
-    const params: Record<string, string | number | boolean> = {};
-    
-    const category = searchParams.get('category');
-    if (category) {
-      params.category = category;
-      setSelectedCategories([category]);
+    fetchProducts(buildParams(currentPage));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, searchQuery, categoryParam, currentPage]);
+
+  // ── Apply sidebar filters ──────────────────────────────────────────────────
+  const applyFilters = useCallback(() => {
+    // Navigate to page 1 of whichever route we're on (dropping any /page/N suffix)
+    if (isFeatured)   navigate('/featured');
+    else if (isNewArrival) navigate('/new-arrivals');
+    else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
+    else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
+    else navigate('/shop');
+
+    fetchProducts(buildParams(1));
+  }, [navigate, isFeatured, isNewArrival, isSearch, isCategory, searchQuery, categoryParam, buildParams]);
+
+  // ── Pagination ─────────────────────────────────────────────────────────────
+  const handlePageChange = (page: number) => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (page <= 1) {
+      // Return to root route without page segment
+      if (isFeatured)    navigate('/featured');
+      else if (isNewArrival) navigate('/new-arrivals');
+      else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
+      else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
+      else navigate('/shop');
+    } else {
+      // Navigate to /xxx/page/N
+      if (isFeatured)    navigate(`/featured/page/${page}`);
+      else if (isNewArrival) navigate(`/new-arrivals/page/${page}`);
+      else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}/page/${page}`);
+      else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}/page/${page}`);
+      else navigate(`/shop/page/${page}`);
     }
-    
-    const search = searchParams.get('search');
-    if (search) params.search = search;
-    
-    const featured = searchParams.get('featured');
-    if (featured === 'true') params.featured = true;
-    
-    const newArrival = searchParams.get('newArrival');
-    if (newArrival === 'true') params.newArrival = true;
-    
-    fetchProducts(params);
-  }, []);
+
+    fetchProducts(buildParams(page));
+  };
 
   const toggleCategory = (category: string) => {
     setSelectedCategories(prev =>
-      prev.includes(category)
-        ? prev.filter(c => c !== category)
-        : [...prev, category]
+      prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
     );
   };
 
   const toggleSize = (size: string) => {
     setSelectedSizes(prev =>
-      prev.includes(size)
-        ? prev.filter(s => s !== size)
-        : [...prev, size]
+      prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
     );
   };
 
@@ -304,12 +352,14 @@ export function Shop() {
     setSelectedSizes([]);
     setPriceRange([0, 500]);
     setSortBy('newest');
-    setSearchParams({});
-    fetchProducts();
-  };
 
-  const handlePageChange = (page: number) => {
-    fetchProducts({}, page);
+    if (isFeatured)    navigate('/featured');
+    else if (isNewArrival) navigate('/new-arrivals');
+    else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
+    else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
+    else navigate('/shop');
+
+    fetchProducts(isFeatured ? { featured: true } : isNewArrival ? { newArrival: true } : {});
   };
 
   return (
@@ -317,18 +367,13 @@ export function Shop() {
       {/* Header */}
       <div className="flag-header py-12">
         <div className="w-full px-4 sm:px-6 lg:px-8">
-          <h1 
+          <h1
             className="text-4xl lg:text-5xl font-bold text-white"
             style={{ fontFamily: "'Bebas Neue', sans-serif" }}
           >
             SHOP
           </h1>
-          <p className="text-blue-300/70 mt-2">
-            {searchParams.get('search') ? `Search results for "${searchParams.get('search')}"` : 
-             searchParams.get('featured') === 'true' ? 'Featured Products' :
-             searchParams.get('newArrival') === 'true' ? 'New Arrivals' :
-             'All Products'}
-          </p>
+          <p className="text-blue-300/70 mt-2">{subtitle}</p>
         </div>
       </div>
 
@@ -361,22 +406,24 @@ export function Shop() {
                 </button>
               </div>
 
-              {/* Categories */}
-              <div className="mb-6">
-                <h4 className="font-medium text-white mb-3">Categories</h4>
-                <div className="space-y-2">
-                  {categories.map((category) => (
-                    <label key={category.name} className="flex items-center space-x-2 cursor-pointer">
-                      <Checkbox
-                        checked={selectedCategories.includes(category.name)}
-                        onCheckedChange={() => toggleCategory(category.name)}
-                      />
-                      <span className="text-sm text-blue-200">{category.name}</span>
-                      <span className="text-xs text-blue-300/70">({category.count})</span>
-                    </label>
-                  ))}
+              {/* Categories — hidden on category-specific pages */}
+              {!isCategory && (
+                <div className="mb-6">
+                  <h4 className="font-medium text-white mb-3">Categories</h4>
+                  <div className="space-y-2">
+                    {categories.map((category) => (
+                      <label key={category.name} className="flex items-center space-x-2 cursor-pointer">
+                        <Checkbox
+                          checked={selectedCategories.includes(category.name)}
+                          onCheckedChange={() => toggleCategory(category.name)}
+                        />
+                        <span className="text-sm text-blue-200">{category.name}</span>
+                        <span className="text-xs text-blue-300/70">({category.count})</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Price Range */}
               <div className="mb-6">
@@ -427,7 +474,7 @@ export function Shop() {
               <p className="text-blue-200">
                 Showing {products.length} of {pagination?.total || 0} products
               </p>
-              
+
               <div className="flex items-center gap-4">
                 {/* Sort */}
                 <div className="flex items-center gap-2">
@@ -436,7 +483,8 @@ export function Shop() {
                     value={sortBy}
                     onChange={(e) => {
                       setSortBy(e.target.value);
-                      applyFilters();
+                      // Re-fetch immediately when sort changes
+                      fetchProducts({ ...buildParams(currentPage), sort: e.target.value });
                     }}
                     className="border border-[#ddd] rounded px-3 py-1.5 text-sm bg-white"
                   >
@@ -488,27 +536,27 @@ export function Shop() {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => handlePageChange(pagination.page - 1)}
-                    disabled={pagination.page === 1}
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
                   >
                     Previous
                   </Button>
-                  
+
                   {Array.from({ length: pagination.pages }, (_, i) => i + 1).map((page) => (
                     <Button
                       key={page}
-                      variant={pagination.page === page ? 'default' : 'outline'}
+                      variant={currentPage === page ? 'default' : 'outline'}
                       onClick={() => handlePageChange(page)}
-                      className={pagination.page === page ? 'bg-[#DC143C] text-white' : ''}
+                      className={currentPage === page ? 'bg-[#DC143C] text-white' : ''}
                     >
                       {page}
                     </Button>
                   ))}
-                  
+
                   <Button
                     variant="outline"
-                    onClick={() => handlePageChange(pagination.page + 1)}
-                    disabled={pagination.page === pagination.pages}
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === pagination.pages}
                   >
                     Next
                   </Button>

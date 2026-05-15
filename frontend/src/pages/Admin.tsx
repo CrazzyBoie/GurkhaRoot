@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart2, Package, ShoppingBag, Users, Tag, AlertTriangle,
   Plus, Trash2, Edit2, X, Upload, Search, UserCog, Shield, ShieldCheck, KeyRound, Eye, EyeOff,
@@ -43,9 +43,12 @@ const METHOD_ICONS: Record<string, React.ReactNode> = {
 };
 
 export function Admin() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'dashboard';
-  const setTab = (tab: string) => setSearchParams({ tab });
+  // ── Clean URL routing: /admin/:tab ─────────────────────────────────────────
+  const { tab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const activeTab = tab || 'dashboard';
+  const setTab = (t: string) => navigate(`/admin/${t}`);
+
   const { user } = useAuthStore();
   const isSuperAdmin = user?.role === 'super_admin';
 
@@ -56,7 +59,7 @@ export function Admin() {
   const [lowStock, setLowStock] = useState<any[]>([]);
   const [dashDateFrom, setDashDateFrom] = useState('');
   const [dashDateTo, setDashDateTo] = useState('');
-  const [dashDateRange, setDashDateRange] = useState(30); // days for chart
+  const [dashDateRange, setDashDateRange] = useState(30);
 
   // ── Products ───────────────────────────────────────────────────────────────
   const [products, setProducts] = useState<any[]>([]);
@@ -72,7 +75,6 @@ export function Admin() {
   });
   const [imageFiles, setImageFiles] = useState<FileList | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
-  // Bulk product entry
   const [showBulkProductForm, setShowBulkProductForm] = useState(false);
   const [bulkProductCount, setBulkProductCount] = useState(5);
   const [bulkBaseForm, setBulkBaseForm] = useState({
@@ -117,7 +119,6 @@ export function Admin() {
   const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
-  // Create new user
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [createUserForm, setCreateUserForm] = useState({ name: '', email: '', phone: '', role: 'customer', password: '' });
   const [createUserPassword, setCreateUserPassword] = useState('');
@@ -127,18 +128,13 @@ export function Admin() {
   // ── Shipping ───────────────────────────────────────────────────────────────
   const [shippingSubTab, setShippingSubTab] = useState<'countries' | 'methods'>('countries');
   const [shippingCountries, setShippingCountries] = useState<any[]>([]);
-
   const [shippingLoading, setShippingLoading] = useState(false);
-
-  // Add country modal
   const [showCountryModal, setShowCountryModal] = useState(false);
   const [editingCountry, setEditingCountry] = useState<any>(null);
   const [countryForm, setCountryForm] = useState({
     name: '', code: '', baseCost: '', freeThreshold: '', currency: 'NZD', active: true,
   });
   const [savingCountry, setSavingCountry] = useState(false);
-
-  // Edit method modal
   const [editingMethod, setEditingMethod] = useState<any>(null);
   const [showMethodModal, setShowMethodModal] = useState(false);
   const [methodForm, setMethodForm] = useState({
@@ -306,9 +302,7 @@ export function Admin() {
     if (coupon) {
       setEditingCoupon(coupon);
       setCouponForm({
-        code: coupon.code,
-        type: coupon.type,
-        value: String(coupon.value),
+        code: coupon.code, type: coupon.type, value: String(coupon.value),
         usageLimit: String(coupon.usageLimit),
         expiryDate: new Date(coupon.expiryDate).toISOString().split('T')[0],
         active: coupon.active,
@@ -320,40 +314,20 @@ export function Admin() {
     setShowCouponForm(true);
   };
 
-  const closeCouponForm = () => {
-    setShowCouponForm(false);
-    setEditingCoupon(null);
-  };
+  const closeCouponForm = () => { setShowCouponForm(false); setEditingCoupon(null); };
 
   const handleSaveCoupon = async () => {
-    if (!couponForm.code.trim()) {
-      toast.error('Coupon code is required');
-      return;
-    }
-    if (!couponForm.value || parseFloat(couponForm.value) <= 0) {
-      toast.error('Value must be greater than 0');
-      return;
-    }
-    if (!couponForm.usageLimit || parseInt(couponForm.usageLimit) <= 0) {
-      toast.error('Usage limit must be greater than 0');
-      return;
-    }
-    if (!couponForm.expiryDate) {
-      toast.error('Expiry date is required');
-      return;
-    }
-
+    if (!couponForm.code.trim()) { toast.error('Coupon code is required'); return; }
+    if (!couponForm.value || parseFloat(couponForm.value) <= 0) { toast.error('Value must be greater than 0'); return; }
+    if (!couponForm.usageLimit || parseInt(couponForm.usageLimit) <= 0) { toast.error('Usage limit must be greater than 0'); return; }
+    if (!couponForm.expiryDate) { toast.error('Expiry date is required'); return; }
     setSavingCoupon(true);
     try {
       const payload = {
-        code: couponForm.code.toUpperCase().trim(),
-        type: couponForm.type,
-        value: parseFloat(couponForm.value),
-        usageLimit: parseInt(couponForm.usageLimit),
-        expiryDate: new Date(couponForm.expiryDate).toISOString(),
-        active: couponForm.active,
+        code: couponForm.code.toUpperCase().trim(), type: couponForm.type,
+        value: parseFloat(couponForm.value), usageLimit: parseInt(couponForm.usageLimit),
+        expiryDate: new Date(couponForm.expiryDate).toISOString(), active: couponForm.active,
       };
-
       if (editingCoupon) {
         await couponsApi.updateCoupon(editingCoupon.id, payload);
         toast.success('Coupon updated successfully');
@@ -372,13 +346,8 @@ export function Admin() {
 
   const handleDeleteCoupon = async (id: string) => {
     if (!confirm('Delete this coupon?')) return;
-    try {
-      await couponsApi.deleteCoupon(id);
-      toast.success('Coupon deleted');
-      loadCoupons();
-    } catch {
-      toast.error('Failed to delete coupon');
-    }
+    try { await couponsApi.deleteCoupon(id); toast.success('Coupon deleted'); loadCoupons(); }
+    catch { toast.error('Failed to delete coupon'); }
   };
 
   const handleToggleCoupon = async (coupon: any) => {
@@ -386,9 +355,7 @@ export function Admin() {
       await couponsApi.updateCoupon(coupon.id, { active: !coupon.active });
       toast.success(coupon.active ? 'Coupon deactivated' : 'Coupon activated');
       loadCoupons();
-    } catch {
-      toast.error('Failed to toggle coupon status');
-    }
+    } catch { toast.error('Failed to toggle coupon status'); }
   };
 
   // ── Users ──────────────────────────────────────────────────────────────────
@@ -409,9 +376,7 @@ export function Admin() {
       loadUsers();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to update user');
-    } finally {
-      setSavingUser(false);
-    }
+    } finally { setSavingUser(false); }
   };
 
   const handleDeleteUser = async (id: string) => {
@@ -423,9 +388,7 @@ export function Admin() {
       loadUsers();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to delete user');
-    } finally {
-      setDeletingUserId(null);
-    }
+    } finally { setDeletingUserId(null); }
   };
 
   const openResetModal = (u: any) => { setSetPasswordUser(u); setNewPassword(''); setShowPassword(false); setShowSetPasswordModal(true); };
@@ -440,9 +403,7 @@ export function Admin() {
       closeResetModal();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to set password');
-    } finally {
-      setSavingPassword(false);
-    }
+    } finally { setSavingPassword(false); }
   };
 
   const handleUserSearch = () => { setUsersPage(1); loadUsers(); };
@@ -452,12 +413,9 @@ export function Admin() {
     if (country) {
       setEditingCountry(country);
       setCountryForm({
-        name: country.name,
-        code: country.code,
-        baseCost: String(country.baseCost),
+        name: country.name, code: country.code, baseCost: String(country.baseCost),
         freeThreshold: country.freeThreshold != null ? String(country.freeThreshold) : '',
-        currency: country.currency,
-        active: country.active,
+        currency: country.currency, active: country.active,
       });
     } else {
       setEditingCountry(null);
@@ -469,18 +427,14 @@ export function Admin() {
   const closeCountryModal = () => { setShowCountryModal(false); setEditingCountry(null); };
 
   const handleSaveCountry = async () => {
-    if (!countryForm.name.trim() || !countryForm.code.trim()) {
-      toast.error('Country name and code are required'); return;
-    }
+    if (!countryForm.name.trim() || !countryForm.code.trim()) { toast.error('Country name and code are required'); return; }
     setSavingCountry(true);
     try {
       const payload = {
-        name: countryForm.name.trim(),
-        code: countryForm.code.trim().toUpperCase(),
+        name: countryForm.name.trim(), code: countryForm.code.trim().toUpperCase(),
         baseCost: parseFloat(countryForm.baseCost) || 0,
         freeThreshold: countryForm.freeThreshold !== '' ? parseFloat(countryForm.freeThreshold) : null,
-        currency: countryForm.currency.trim().toUpperCase() || 'NZD',
-        active: countryForm.active,
+        currency: countryForm.currency.trim().toUpperCase() || 'NZD', active: countryForm.active,
       };
       if (editingCountry) {
         await adminShippingApi.updateCountry(editingCountry.id, payload);
@@ -493,20 +447,13 @@ export function Admin() {
       loadShipping();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to save country');
-    } finally {
-      setSavingCountry(false);
-    }
+    } finally { setSavingCountry(false); }
   };
 
   const handleDeleteCountry = async (id: string) => {
     if (!confirm('Delete this country and all its shipping methods?')) return;
-    try {
-      await adminShippingApi.deleteCountry(id);
-      toast.success('Country deleted');
-      loadShipping();
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to delete country');
-    }
+    try { await adminShippingApi.deleteCountry(id); toast.success('Country deleted'); loadShipping(); }
+    catch (e: any) { toast.error(e.response?.data?.message || 'Failed to delete country'); }
   };
 
   const handleToggleCountry = async (country: any) => {
@@ -514,20 +461,13 @@ export function Admin() {
       await adminShippingApi.updateCountry(country.id, { active: !country.active });
       toast.success(country.active ? 'Country disabled' : 'Country enabled');
       loadShipping();
-    } catch {
-      toast.error('Failed to update country');
-    }
+    } catch { toast.error('Failed to update country'); }
   };
 
   // ── Shipping: Methods ──────────────────────────────────────────────────────
   const openMethodModal = (method: any) => {
     setEditingMethod(method);
-    setMethodForm({
-      label: method.label,
-      description: method.description,
-      cost: String(method.cost),
-      active: method.active,
-    });
+    setMethodForm({ label: method.label, description: method.description, cost: String(method.cost), active: method.active });
     setShowMethodModal(true);
   };
 
@@ -538,26 +478,20 @@ export function Admin() {
     setSavingMethod(true);
     try {
       await adminShippingApi.updateMethod(editingMethod.id, {
-        label: methodForm.label.trim(),
-        description: methodForm.description.trim(),
-        cost: parseFloat(methodForm.cost) || 0,
-        active: methodForm.active,
+        label: methodForm.label.trim(), description: methodForm.description.trim(),
+        cost: parseFloat(methodForm.cost) || 0, active: methodForm.active,
       });
       toast.success('Method updated');
       closeMethodModal();
       loadShipping();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to update method');
-    } finally {
-      setSavingMethod(false);
-    }
+    } finally { setSavingMethod(false); }
   };
 
   // ── Bulk Product Entry ─────────────────────────────────────────────────────
   const handleSaveBulkProducts = async () => {
-    if (!bulkBaseForm.name.trim() || !bulkBaseForm.price) {
-      toast.error('Name and price are required'); return;
-    }
+    if (!bulkBaseForm.name.trim() || !bulkBaseForm.price) { toast.error('Name and price are required'); return; }
     setSavingBulk(true);
     setBulkProgress({ done: 0, total: bulkProductCount });
     let successCount = 0;
@@ -576,9 +510,7 @@ export function Admin() {
         await productsApi.createProduct(formData);
         successCount++;
         setBulkProgress({ done: i + 1, total: bulkProductCount });
-      } catch {
-        toast.error(`Failed to create product ${i + 1}`);
-      }
+      } catch { toast.error(`Failed to create product ${i + 1}`); }
     }
     setSavingBulk(false);
     setBulkProgress(null);
@@ -613,9 +545,7 @@ export function Admin() {
       loadUsers();
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to create user');
-    } finally {
-      setSavingCreateUser(false);
-    }
+    } finally { setSavingCreateUser(false); }
   };
 
   // ── Export helpers ─────────────────────────────────────────────────────────
@@ -635,48 +565,31 @@ export function Admin() {
 
   const exportProducts = () => {
     const headers = ['Name', 'Category', 'Price', 'Material', 'Variants', 'Featured', 'New Arrival'];
-    const rows = products.map(p => [
-      p.name, p.category, p.price.toFixed(2), p.material || '',
-      p.variants?.length || 0, p.featured ? 'Yes' : 'No', p.newArrival ? 'Yes' : 'No',
-    ]);
+    const rows = products.map(p => [p.name, p.category, p.price.toFixed(2), p.material || '', p.variants?.length || 0, p.featured ? 'Yes' : 'No', p.newArrival ? 'Yes' : 'No']);
     exportToCSV('products.csv', rows, headers);
   };
 
   const exportOrders = () => {
     const headers = ['Order #', 'Customer', 'Email', 'Date', 'Total', 'Payment', 'Status'];
-    const rows = orders.map(o => [
-      o.orderNumber, o.user?.name || 'Guest', o.user?.email || o.guestEmail || '',
-      new Date(o.createdAt).toLocaleDateString('en-AU'), o.total?.toFixed(2),
-      o.paymentMethod === 'google_pay' ? 'Google Pay' : 'Card', o.status,
-    ]);
+    const rows = orders.map(o => [o.orderNumber, o.user?.name || 'Guest', o.user?.email || o.guestEmail || '', new Date(o.createdAt).toLocaleDateString('en-AU'), o.total?.toFixed(2), o.paymentMethod === 'google_pay' ? 'Google Pay' : 'Card', o.status]);
     exportToCSV('orders.csv', rows, headers);
   };
 
   const exportCoupons = () => {
     const headers = ['Code', 'Type', 'Value', 'Usage Limit', 'Used', 'Expiry', 'Active'];
-    const rows = coupons.map(c => [
-      c.code, c.type, c.value, c.usageLimit, c.usedCount ?? 0,
-      new Date(c.expiryDate).toLocaleDateString('en-AU'), c.active ? 'Yes' : 'No',
-    ]);
+    const rows = coupons.map(c => [c.code, c.type, c.value, c.usageLimit, c.usedCount ?? 0, new Date(c.expiryDate).toLocaleDateString('en-AU'), c.active ? 'Yes' : 'No']);
     exportToCSV('coupons.csv', rows, headers);
   };
 
   const exportUsers = () => {
     const headers = ['Name', 'Email', 'Phone', 'Role', 'Orders', 'Joined'];
-    const rows = usersList.map(u => [
-      u.name, u.email, u.phone || '', u.role,
-      u._count?.orders ?? 0, new Date(u.createdAt).toLocaleDateString('en-AU'),
-    ]);
+    const rows = usersList.map(u => [u.name, u.email, u.phone || '', u.role, u._count?.orders ?? 0, new Date(u.createdAt).toLocaleDateString('en-AU')]);
     exportToCSV('users.csv', rows, headers);
   };
 
   const exportShipping = () => {
     const headers = ['Country', 'Code', 'Base Cost', 'Free Threshold', 'Currency', 'Active'];
-    const rows = shippingCountries.map(c => [
-      c.name, c.code, c.baseCost.toFixed(2),
-      c.freeThreshold != null ? c.freeThreshold.toFixed(2) : '',
-      c.currency, c.active ? 'Yes' : 'No',
-    ]);
+    const rows = shippingCountries.map(c => [c.name, c.code, c.baseCost.toFixed(2), c.freeThreshold != null ? c.freeThreshold.toFixed(2) : '', c.currency, c.active ? 'Yes' : 'No']);
     exportToCSV('shipping.csv', rows, headers);
   };
 
@@ -727,7 +640,6 @@ export function Admin() {
         {/* ── Dashboard ── */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Date filter bar */}
             <div className="flex flex-wrap items-center gap-3 p-4 bg-white/5 rounded-xl border border-white/10">
               <CalendarRange className="w-4 h-4 text-blue-300/70 shrink-0" />
               <span className="text-sm text-blue-200 font-medium">Filter period:</span>
@@ -750,6 +662,7 @@ export function Admin() {
               </div>
               <Button size="sm" onClick={loadDashboard} className="bg-[#1a1a1a] text-white text-xs">Apply</Button>
             </div>
+
             {stats && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
@@ -873,7 +786,7 @@ export function Admin() {
                     <div className="md:col-span-2"><Label>Base Name <span className="text-blue-300/50 text-xs">(will become "Name #1", "Name #2"…)</span></Label><Input value={bulkBaseForm.name} onChange={e => setBulkBaseForm({ ...bulkBaseForm, name: e.target.value })} placeholder="e.g. Gurkha Tee" /></div>
                     <div className="md:col-span-2"><Label>Description</Label><textarea value={bulkBaseForm.description} onChange={e => setBulkBaseForm({ ...bulkBaseForm, description: e.target.value })} className="w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm min-h-[80px] resize-y" /></div>
                     <div><Label>Category</Label><Input value={bulkBaseForm.category} onChange={e => setBulkBaseForm({ ...bulkBaseForm, category: e.target.value })} placeholder="Tops, Jackets..." /></div>
-                    <div><Label>Price (AUD)</Label><Input type="number" value={bulkBaseForm.price} onChange={e => setBulkBaseForm({ ...bulkBaseForm, price: e.target.value })} /></div>
+                    <div><Label>Price (NZD)</Label><Input type="number" value={bulkBaseForm.price} onChange={e => setBulkBaseForm({ ...bulkBaseForm, price: e.target.value })} /></div>
                     <div className="md:col-span-2"><Label>Material</Label><Input value={bulkBaseForm.material} onChange={e => setBulkBaseForm({ ...bulkBaseForm, material: e.target.value })} /></div>
                     <div className="flex items-center gap-6">
                       <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={bulkBaseForm.featured} onChange={e => setBulkBaseForm({ ...bulkBaseForm, featured: e.target.checked })} />Featured</label>
@@ -928,7 +841,7 @@ export function Admin() {
                     <div className="md:col-span-2"><Label>Name</Label><Input value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} /></div>
                     <div className="md:col-span-2"><Label>Description</Label><textarea value={productForm.description} onChange={e => setProductForm({ ...productForm, description: e.target.value })} className="w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm min-h-[80px] resize-y" /></div>
                     <div><Label>Category</Label><Input value={productForm.category} onChange={e => setProductForm({ ...productForm, category: e.target.value })} placeholder="Tops, Jackets..." /></div>
-                    <div><Label>Price (AUD)</Label><Input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} /></div>
+                    <div><Label>Price (NZD)</Label><Input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} /></div>
                     <div className="md:col-span-2"><Label>Material</Label><Input value={productForm.material} onChange={e => setProductForm({ ...productForm, material: e.target.value })} /></div>
                     <div className="flex items-center gap-6">
                       <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={productForm.featured} onChange={e => setProductForm({ ...productForm, featured: e.target.checked })} />Featured</label>
@@ -1074,8 +987,6 @@ export function Admin() {
                 <Button onClick={() => openCouponForm()} className="bg-[#1a1a1a] text-white"><Plus className="w-4 h-4 mr-2" /> New Coupon</Button>
               </div>
             </div>
-
-            {/* Coupon Form (Create/Edit) */}
             {showCouponForm && (
               <Card className="flag-card border-0 shadow-sm">
                 <CardContent className="p-6">
@@ -1086,84 +997,42 @@ export function Admin() {
                   <div className="grid md:grid-cols-2 gap-4">
                     <div>
                       <Label>Code</Label>
-                      <Input 
-                        value={couponForm.code} 
-                        onChange={e => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })} 
-                        placeholder="WELCOME10" 
-                        className="mt-1 bg-white/10 border-white/15 text-white font-mono"
-                        disabled={!!editingCoupon}
-                      />
+                      <Input value={couponForm.code} onChange={e => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })} placeholder="WELCOME10" className="mt-1 bg-white/10 border-white/15 text-white font-mono" disabled={!!editingCoupon} />
                       {editingCoupon && <p className="text-xs text-blue-300/50 mt-1">Code cannot be changed</p>}
                     </div>
                     <div>
                       <Label>Type</Label>
-                      <select 
-                        value={couponForm.type} 
-                        onChange={e => setCouponForm({ ...couponForm, type: e.target.value })} 
-                        className="mt-1 w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm"
-                      >
+                      <select value={couponForm.type} onChange={e => setCouponForm({ ...couponForm, type: e.target.value })} className="mt-1 w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm">
                         <option value="percentage">Percentage (%)</option>
                         <option value="fixed">Fixed Amount ($)</option>
                       </select>
                     </div>
                     <div>
                       <Label>Value</Label>
-                      <Input 
-                        type="number" 
-                        min="0"
-                        step={couponForm.type === 'percentage' ? '1' : '0.01'}
-                        value={couponForm.value} 
-                        onChange={e => setCouponForm({ ...couponForm, value: e.target.value })} 
-                        placeholder={couponForm.type === 'percentage' ? '10' : '25.00'} 
-                        className="mt-1 bg-white/10 border-white/15 text-white"
-                      />
+                      <Input type="number" min="0" step={couponForm.type === 'percentage' ? '1' : '0.01'} value={couponForm.value} onChange={e => setCouponForm({ ...couponForm, value: e.target.value })} placeholder={couponForm.type === 'percentage' ? '10' : '25.00'} className="mt-1 bg-white/10 border-white/15 text-white" />
                     </div>
                     <div>
                       <Label>Usage Limit</Label>
-                      <Input 
-                        type="number" 
-                        min="1"
-                        value={couponForm.usageLimit} 
-                        onChange={e => setCouponForm({ ...couponForm, usageLimit: e.target.value })} 
-                        placeholder="100" 
-                        className="mt-1 bg-white/10 border-white/15 text-white"
-                      />
+                      <Input type="number" min="1" value={couponForm.usageLimit} onChange={e => setCouponForm({ ...couponForm, usageLimit: e.target.value })} placeholder="100" className="mt-1 bg-white/10 border-white/15 text-white" />
                     </div>
                     <div>
                       <Label>Expiry Date</Label>
-                      <Input 
-                        type="date" 
-                        value={couponForm.expiryDate} 
-                        onChange={e => setCouponForm({ ...couponForm, expiryDate: e.target.value })} 
-                        className="mt-1 bg-white/10 border-white/15 text-white"
-                      />
+                      <Input type="date" value={couponForm.expiryDate} onChange={e => setCouponForm({ ...couponForm, expiryDate: e.target.value })} className="mt-1 bg-white/10 border-white/15 text-white" />
                     </div>
                     <div className="flex items-end pb-1">
                       <label className="flex items-center gap-2 cursor-pointer text-sm text-blue-200">
-                        <input 
-                          type="checkbox" 
-                          checked={couponForm.active} 
-                          onChange={e => setCouponForm({ ...couponForm, active: e.target.checked })} 
-                          className="w-4 h-4" 
-                        />
+                        <input type="checkbox" checked={couponForm.active} onChange={e => setCouponForm({ ...couponForm, active: e.target.checked })} className="w-4 h-4" />
                         Active (available for customers)
                       </label>
                     </div>
                   </div>
                   <div className="flex gap-3 mt-6">
-                    <Button 
-                      onClick={handleSaveCoupon} 
-                      disabled={savingCoupon} 
-                      className="bg-[#1a1a1a] text-white"
-                    >
-                      {savingCoupon ? 'Saving...' : editingCoupon ? 'Update Coupon' : 'Create Coupon'}
-                    </Button>
+                    <Button onClick={handleSaveCoupon} disabled={savingCoupon} className="bg-[#1a1a1a] text-white">{savingCoupon ? 'Saving...' : editingCoupon ? 'Update Coupon' : 'Create Coupon'}</Button>
                     <Button variant="outline" onClick={closeCouponForm}>Cancel</Button>
                   </div>
                 </CardContent>
               </Card>
             )}
-
             <Card className="flag-card border-0 shadow-sm">
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
@@ -1185,33 +1054,12 @@ export function Admin() {
                           <td className="py-3 px-4 font-medium text-white">{coupon.type === 'percentage' ? `${coupon.value}%` : `$${coupon.value.toFixed(2)}`}</td>
                           <td className="py-3 px-4 text-blue-200">{coupon.usedCount} / {coupon.usageLimit}</td>
                           <td className="py-3 px-4 text-blue-200">{new Date(coupon.expiryDate).toLocaleDateString('en-AU')}</td>
-                          <td className="py-3 px-4">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coupon.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                              {coupon.active ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
+                          <td className="py-3 px-4"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coupon.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{coupon.active ? 'Active' : 'Inactive'}</span></td>
                           <td className="py-3 px-4 text-right">
                             <div className="flex justify-end gap-2">
-                              <Button variant="outline" size="sm" onClick={() => openCouponForm(coupon)} title="Edit">
-                                <Edit2 className="w-3 h-3" />
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => handleToggleCoupon(coupon)} 
-                                title={coupon.active ? 'Deactivate' : 'Activate'}
-                              >
-                                {coupon.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="text-red-500 border-red-200 hover:bg-red-50" 
-                                onClick={() => handleDeleteCoupon(coupon.id)}
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => openCouponForm(coupon)} title="Edit"><Edit2 className="w-3 h-3" /></Button>
+                              <Button variant="outline" size="sm" onClick={() => handleToggleCoupon(coupon)} title={coupon.active ? 'Deactivate' : 'Activate'}>{coupon.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}</Button>
+                              <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCoupon(coupon.id)} title="Delete"><Trash2 className="w-3 h-3" /></Button>
                             </div>
                           </td>
                         </tr>
@@ -1235,30 +1083,18 @@ export function Admin() {
                 <button onClick={loadShipping} className="text-xs text-blue-300/70 hover:text-white underline">Refresh</button>
               </div>
             </div>
-
-            {/* Sub-tabs */}
             <div className="flex gap-1 p-1 bg-white/5 rounded-lg w-fit">
-              <button
-                onClick={() => setShippingSubTab('countries')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${shippingSubTab === 'countries' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}
-              >
+              <button onClick={() => setShippingSubTab('countries')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${shippingSubTab === 'countries' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}>
                 <Globe className="w-4 h-4" /> Countries
               </button>
-              <button
-                onClick={() => setShippingSubTab('methods')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${shippingSubTab === 'methods' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}
-              >
+              <button onClick={() => setShippingSubTab('methods')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${shippingSubTab === 'methods' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}>
                 <Truck className="w-4 h-4" /> Methods
               </button>
             </div>
-
             {shippingLoading ? (
-              <div className="space-y-3">
-                {[1,2,3].map(n => <div key={n} className="h-16 bg-white/5 animate-pulse rounded-lg" />)}
-              </div>
+              <div className="space-y-3">{[1,2,3].map(n => <div key={n} className="h-16 bg-white/5 animate-pulse rounded-lg" />)}</div>
             ) : (
               <>
-                {/* ── Countries sub-tab ── */}
                 {shippingSubTab === 'countries' && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -1272,7 +1108,6 @@ export function Admin() {
                         </Button>
                       )}
                     </div>
-
                     <Card className="flag-card border-0 shadow-sm">
                       <CardContent className="p-0">
                         <div className="overflow-x-auto">
@@ -1296,31 +1131,19 @@ export function Admin() {
                                   <td className="py-3 px-4 text-blue-200">{country.baseCost === 0 ? <span className="text-green-400">Free</span> : `$${country.baseCost.toFixed(2)}`}</td>
                                   <td className="py-3 px-4 text-blue-200">{country.freeThreshold != null ? `$${country.freeThreshold.toFixed(2)}` : <span className="text-blue-300/40">—</span>}</td>
                                   <td className="py-3 px-4 text-blue-200">{country.currency}</td>
-                                  <td className="py-3 px-4">
-                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${country.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                      {country.active ? 'Active' : 'Inactive'}
-                                    </span>
-                                  </td>
+                                  <td className="py-3 px-4"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${country.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{country.active ? 'Active' : 'Inactive'}</span></td>
                                   {isSuperAdmin && (
                                     <td className="py-3 px-4 text-right">
                                       <div className="flex justify-end gap-2">
-                                        <Button variant="outline" size="sm" onClick={() => handleToggleCountry(country)} title={country.active ? 'Disable' : 'Enable'}>
-                                          {country.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}
-                                        </Button>
-                                        <Button variant="outline" size="sm" onClick={() => openCountryModal(country)}>
-                                          <Pencil className="w-3 h-3" />
-                                        </Button>
-                                        <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCountry(country.id)}>
-                                          <Trash2 className="w-3 h-3" />
-                                        </Button>
+                                        <Button variant="outline" size="sm" onClick={() => handleToggleCountry(country)} title={country.active ? 'Disable' : 'Enable'}>{country.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}</Button>
+                                        <Button variant="outline" size="sm" onClick={() => openCountryModal(country)}><Pencil className="w-3 h-3" /></Button>
+                                        <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCountry(country.id)}><Trash2 className="w-3 h-3" /></Button>
                                       </div>
                                     </td>
                                   )}
                                 </tr>
                               ))}
-                              {shippingCountries.length === 0 && (
-                                <tr><td colSpan={7} className="py-12 text-center text-blue-300/70">No countries configured</td></tr>
-                              )}
+                              {shippingCountries.length === 0 && <tr><td colSpan={7} className="py-12 text-center text-blue-300/70">No countries configured</td></tr>}
                             </tbody>
                           </table>
                         </div>
@@ -1328,21 +1151,14 @@ export function Admin() {
                     </Card>
                   </div>
                 )}
-
-                {/* ── Methods sub-tab ── */}
                 {shippingSubTab === 'methods' && (
                   <div className="space-y-4">
                     <div>
                       <p className="text-sm font-semibold text-white">Shipping Methods</p>
                       <p className="text-xs text-blue-300/70">Per-country rate overrides. Methods are auto-created when you add a country.</p>
                     </div>
-
                     {shippingCountries.length === 0 ? (
-                      <Card className="flag-card border-0 shadow-sm">
-                        <CardContent className="p-8 text-center text-blue-300/70">
-                          No countries yet — add a country first and its methods will appear here.
-                        </CardContent>
-                      </Card>
+                      <Card className="flag-card border-0 shadow-sm"><CardContent className="p-8 text-center text-blue-300/70">No countries yet — add a country first and its methods will appear here.</CardContent></Card>
                     ) : (
                       shippingCountries.map(country => (
                         <Card key={country.id} className="flag-card border-0 shadow-sm">
@@ -1366,23 +1182,13 @@ export function Admin() {
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-4">
-                                    <span className={`text-sm font-semibold ${method.cost === 0 ? 'text-green-400' : 'text-white'}`}>
-                                      {method.cost === 0 ? 'Free' : `$${method.cost.toFixed(2)}`}
-                                    </span>
-                                    <span className={`text-xs px-2 py-0.5 rounded-full ${method.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                      {method.active ? 'On' : 'Off'}
-                                    </span>
-                                    {isSuperAdmin && (
-                                      <Button variant="outline" size="sm" onClick={() => openMethodModal(method)}>
-                                        <Pencil className="w-3 h-3" />
-                                      </Button>
-                                    )}
+                                    <span className={`text-sm font-semibold ${method.cost === 0 ? 'text-green-400' : 'text-white'}`}>{method.cost === 0 ? 'Free' : `$${method.cost.toFixed(2)}`}</span>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${method.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{method.active ? 'On' : 'Off'}</span>
+                                    {isSuperAdmin && <Button variant="outline" size="sm" onClick={() => openMethodModal(method)}><Pencil className="w-3 h-3" /></Button>}
                                   </div>
                                 </div>
                               ))}
-                              {(!country.methods || country.methods.length === 0) && (
-                                <div className="px-4 py-3 text-sm text-blue-300/70">No methods for this country.</div>
-                              )}
+                              {(!country.methods || country.methods.length === 0) && <div className="px-4 py-3 text-sm text-blue-300/70">No methods for this country.</div>}
                             </div>
                           </CardContent>
                         </Card>
@@ -1476,44 +1282,20 @@ export function Admin() {
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-slate-300">Country Name</Label>
-                  <Input value={countryForm.name} onChange={e => setCountryForm({ ...countryForm, name: e.target.value })} placeholder="New Zealand" className="mt-1 bg-slate-800 border-slate-600 text-white" disabled={!!editingCountry} />
-                </div>
-                <div>
-                  <Label className="text-slate-300">ISO Code</Label>
-                  <Input value={countryForm.code} onChange={e => setCountryForm({ ...countryForm, code: e.target.value.toUpperCase() })} placeholder="NZ" maxLength={3} className="mt-1 bg-slate-800 border-slate-600 text-white font-mono" disabled={!!editingCountry} />
-                </div>
+                <div><Label className="text-slate-300">Country Name</Label><Input value={countryForm.name} onChange={e => setCountryForm({ ...countryForm, name: e.target.value })} placeholder="New Zealand" className="mt-1 bg-slate-800 border-slate-600 text-white" disabled={!!editingCountry} /></div>
+                <div><Label className="text-slate-300">ISO Code</Label><Input value={countryForm.code} onChange={e => setCountryForm({ ...countryForm, code: e.target.value.toUpperCase() })} placeholder="NZ" maxLength={3} className="mt-1 bg-slate-800 border-slate-600 text-white font-mono" disabled={!!editingCountry} /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-slate-300">Base Cost ($)</Label>
-                  <Input type="number" min="0" step="0.01" value={countryForm.baseCost} onChange={e => setCountryForm({ ...countryForm, baseCost: e.target.value })} placeholder="15.00" className="mt-1 bg-slate-800 border-slate-600 text-white" />
-                  <p className="text-xs text-slate-500 mt-1">Standard rate. Express = ×1.8, Overnight = ×3</p>
-                </div>
-                <div>
-                  <Label className="text-slate-300">Free Threshold ($)</Label>
-                  <Input type="number" min="0" step="0.01" value={countryForm.freeThreshold} onChange={e => setCountryForm({ ...countryForm, freeThreshold: e.target.value })} placeholder="100 (optional)" className="mt-1 bg-slate-800 border-slate-600 text-white" />
-                  <p className="text-xs text-slate-500 mt-1">Leave blank for no free shipping</p>
-                </div>
+                <div><Label className="text-slate-300">Base Cost ($)</Label><Input type="number" min="0" step="0.01" value={countryForm.baseCost} onChange={e => setCountryForm({ ...countryForm, baseCost: e.target.value })} placeholder="15.00" className="mt-1 bg-slate-800 border-slate-600 text-white" /><p className="text-xs text-slate-500 mt-1">Standard rate. Express = ×1.8, Overnight = ×3</p></div>
+                <div><Label className="text-slate-300">Free Threshold ($)</Label><Input type="number" min="0" step="0.01" value={countryForm.freeThreshold} onChange={e => setCountryForm({ ...countryForm, freeThreshold: e.target.value })} placeholder="100 (optional)" className="mt-1 bg-slate-800 border-slate-600 text-white" /><p className="text-xs text-slate-500 mt-1">Leave blank for no free shipping</p></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-slate-300">Currency</Label>
-                  <Input value={countryForm.currency} onChange={e => setCountryForm({ ...countryForm, currency: e.target.value.toUpperCase() })} placeholder="NZD" maxLength={3} className="mt-1 bg-slate-800 border-slate-600 text-white font-mono" />
-                </div>
-                <div className="flex items-end pb-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
-                    <input type="checkbox" checked={countryForm.active} onChange={e => setCountryForm({ ...countryForm, active: e.target.checked })} className="w-4 h-4" />
-                    Active
-                  </label>
-                </div>
+                <div><Label className="text-slate-300">Currency</Label><Input value={countryForm.currency} onChange={e => setCountryForm({ ...countryForm, currency: e.target.value.toUpperCase() })} placeholder="NZD" maxLength={3} className="mt-1 bg-slate-800 border-slate-600 text-white font-mono" /></div>
+                <div className="flex items-end pb-1"><label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300"><input type="checkbox" checked={countryForm.active} onChange={e => setCountryForm({ ...countryForm, active: e.target.checked })} className="w-4 h-4" />Active</label></div>
               </div>
             </div>
             <div className="flex gap-3 p-6 border-t border-slate-700">
-              <Button onClick={handleSaveCountry} disabled={savingCountry} className="flex-1 bg-[#DC143C] text-white hover:bg-[#b01030]">
-                {savingCountry ? 'Saving...' : editingCountry ? 'Update Country' : 'Add Country'}
-              </Button>
+              <Button onClick={handleSaveCountry} disabled={savingCountry} className="flex-1 bg-[#DC143C] text-white hover:bg-[#b01030]">{savingCountry ? 'Saving...' : editingCountry ? 'Update Country' : 'Add Country'}</Button>
               <Button variant="outline" onClick={closeCountryModal} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
             </div>
           </div>
@@ -1528,35 +1310,18 @@ export function Admin() {
             <div className="flex items-center justify-between p-6 border-b border-slate-700">
               <div className="flex items-center gap-3">
                 {METHOD_ICONS[editingMethod.methodId] ?? <Truck className="w-5 h-5 text-blue-400" />}
-                <div>
-                  <h3 className="text-base font-semibold text-white">Edit {editingMethod.methodId} method</h3>
-                  <p className="text-xs text-slate-400">{editingMethod.country?.name}</p>
-                </div>
+                <div><h3 className="text-base font-semibold text-white">Edit {editingMethod.methodId} method</h3><p className="text-xs text-slate-400">{editingMethod.country?.name}</p></div>
               </div>
               <button onClick={closeMethodModal} className="p-1.5 rounded-lg hover:bg-slate-700 transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="p-6 space-y-4">
-              <div>
-                <Label className="text-slate-300">Label</Label>
-                <Input value={methodForm.label} onChange={e => setMethodForm({ ...methodForm, label: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" />
-              </div>
-              <div>
-                <Label className="text-slate-300">Description</Label>
-                <Input value={methodForm.description} onChange={e => setMethodForm({ ...methodForm, description: e.target.value })} placeholder="5–10 business days" className="mt-1 bg-slate-800 border-slate-600 text-white" />
-              </div>
-              <div>
-                <Label className="text-slate-300">Cost ($)</Label>
-                <Input type="number" min="0" step="0.01" value={methodForm.cost} onChange={e => setMethodForm({ ...methodForm, cost: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" />
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
-                <input type="checkbox" checked={methodForm.active} onChange={e => setMethodForm({ ...methodForm, active: e.target.checked })} className="w-4 h-4" />
-                Active (shown to customers)
-              </label>
+              <div><Label className="text-slate-300">Label</Label><Input value={methodForm.label} onChange={e => setMethodForm({ ...methodForm, label: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" /></div>
+              <div><Label className="text-slate-300">Description</Label><Input value={methodForm.description} onChange={e => setMethodForm({ ...methodForm, description: e.target.value })} placeholder="5–10 business days" className="mt-1 bg-slate-800 border-slate-600 text-white" /></div>
+              <div><Label className="text-slate-300">Cost ($)</Label><Input type="number" min="0" step="0.01" value={methodForm.cost} onChange={e => setMethodForm({ ...methodForm, cost: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" /></div>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300"><input type="checkbox" checked={methodForm.active} onChange={e => setMethodForm({ ...methodForm, active: e.target.checked })} className="w-4 h-4" />Active (shown to customers)</label>
             </div>
             <div className="flex gap-3 p-6 border-t border-slate-700">
-              <Button onClick={handleSaveMethod} disabled={savingMethod} className="flex-1 bg-[#DC143C] text-white hover:bg-[#b01030]">
-                {savingMethod ? 'Saving...' : 'Save Method'}
-              </Button>
+              <Button onClick={handleSaveMethod} disabled={savingMethod} className="flex-1 bg-[#DC143C] text-white hover:bg-[#b01030]">{savingMethod ? 'Saving...' : 'Save Method'}</Button>
               <Button variant="outline" onClick={closeMethodModal} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
             </div>
           </div>
@@ -1583,9 +1348,7 @@ export function Admin() {
                 <Label className="text-slate-300">Password</Label>
                 <div className="relative mt-1">
                   <Input type={showCreatePassword ? 'text' : 'password'} value={createUserPassword} onChange={e => setCreateUserPassword(e.target.value)} placeholder="Min. 6 characters" className="pr-10 bg-slate-800 border-slate-600 text-white" />
-                  <button type="button" onClick={() => setShowCreatePassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>
-                    {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+                  <button type="button" onClick={() => setShowCreatePassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>{showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                 </div>
                 {createUserPassword.length > 0 && createUserPassword.length < 6 && <p className="text-xs text-red-400 mt-1">Password must be at least 6 characters</p>}
               </div>
@@ -1655,9 +1418,7 @@ export function Admin() {
                 <Label htmlFor="new-password" className="text-slate-300">New Password</Label>
                 <div className="relative mt-1">
                   <Input id="new-password" type={showPassword ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendPasswordReset()} placeholder="Min. 6 characters" className="pr-10 bg-slate-800 border-slate-600 text-white" autoFocus />
-                  <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+                  <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300" tabIndex={-1}>{showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                 </div>
                 {newPassword.length > 0 && newPassword.length < 6 && <p className="text-xs text-red-400 mt-1">Password must be at least 6 characters</p>}
               </div>
