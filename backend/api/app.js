@@ -8,16 +8,12 @@ import rateLimit from 'express-rate-limit';
 
 import { getDb } from './lib/firebase.js';
 
-// ── DO NOT call process.exit() at module load time in a serverless function.
-// Firebase init is deferred to request time so a missing env var returns a 500,
-// not a crashed function that makes Vercel return its own 404.
 let firebaseReady = false;
 try {
   getDb();
   firebaseReady = true;
 } catch (err) {
   console.error('[Startup] Firebase init failed:', err.message);
-  // Do NOT process.exit(1) — let the function stay alive so we can return a 503
 }
 
 import './config/passport.js';
@@ -34,13 +30,14 @@ import shippingRoutes from './routes/shipping.routes.js';
 
 const app = express();
 
+// ── Trust Vercel's proxy (required for express-rate-limit behind Vercel) ──────
+app.set('trust proxy', 1);
+
 // ── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-// Strip trailing slash from CLIENT_URL to avoid CORS / redirect mismatches
 const clientOrigin = (process.env.CLIENT_URL || 'https://gurkharoot.vercel.app').replace(/\/$/, '');
 
-// Accept both http and https variants so a wrong env var doesn't silently break things
 const allowedOrigins = new Set([
   clientOrigin,
   clientOrigin.replace(/^http:\/\//, 'https://'),
