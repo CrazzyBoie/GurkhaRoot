@@ -32,8 +32,10 @@ export function Navbar() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      navigate(`/shop?search=${encodeURIComponent(searchQuery)}`);
+      // ✅ Clean URL: /search/:query
+      navigate(`/search/${encodeURIComponent(searchQuery.trim())}`);
       setSearchQuery('');
+      setIsMobileMenuOpen(false);
     }
   };
 
@@ -43,10 +45,10 @@ export function Navbar() {
   };
 
   const navLinks = [
-    { name: 'Home', href: '/' },
-    { name: 'Shop', href: '/shop' },
-    { name: 'New Arrivals', href: '/shop?newArrival=true' },
-    { name: 'Featured', href: '/shop?featured=true' },
+    { name: 'Home',         href: '/' },
+    { name: 'Shop',         href: '/shop' },
+    { name: 'New Arrivals', href: '/new-arrivals' },  // ✅ clean URL
+    { name: 'Featured',     href: '/featured' },       // ✅ clean URL
   ];
 
   return (
@@ -61,16 +63,13 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16 lg:h-20">
           {/* Logo + Brand Name */}
           <Link to="/" className="flex items-center space-x-3">
-            {/* Logo with matching background */}
             <div className="bg-blue-950 p-2 rounded-lg flex items-center justify-center">
               <img
-                src="/logo.png"           // Your Gurkha Roots logo
+                src="/logo.png"
                 alt="Gurkha Roots Logo"
                 className="h-9 w-auto lg:h-11 object-contain"
               />
             </div>
-
-            {/* Brand Text */}
             <span
               className="text-2xl lg:text-3xl font-bold text-white tracking-wider"
               style={{ fontFamily: "'Bebas Neue', sans-serif" }}
@@ -113,7 +112,7 @@ export function Navbar() {
 
           {/* Actions */}
           <div className="flex items-center space-x-2 lg:space-x-4">
-            {/* Cart with Hover Tooltip */}
+            {/* Cart */}
             <div className="relative group">
               <Link to="/cart">
                 <Button
@@ -135,7 +134,7 @@ export function Navbar() {
               </div>
             </div>
 
-            {/* Account with Hover Tooltip */}
+            {/* Account */}
             {isAuthenticated ? (
               <div className="relative group">
                 <DropdownMenu>
@@ -148,10 +147,7 @@ export function Navbar() {
                       <User className="w-5 h-5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-48 bg-[#001f5c] border-white/10"
-                  >
+                  <DropdownMenuContent align="end" className="w-48 bg-[#001f5c] border-white/10">
                     <div className="px-3 py-2 text-white">
                       <p className="font-medium">{user?.name}</p>
                       <p className="text-xs text-blue-300">{user?.email}</p>
@@ -183,7 +179,6 @@ export function Navbar() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-
                 <div className="absolute hidden group-hover:block bg-gray-900 text-white text-xs px-3 py-1.5 rounded-md -bottom-10 left-1/2 -translate-x-1/2 whitespace-nowrap shadow-lg border border-gray-700">
                   Account
                   <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 border-l border-t border-gray-700 rotate-45"></div>

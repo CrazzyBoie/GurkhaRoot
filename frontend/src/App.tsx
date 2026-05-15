@@ -15,16 +15,12 @@ import {
 } from '@/pages';
 import './App.css';
 
-// Scrolls to top on every route change.
-// Temporarily disables css scroll-behavior:smooth on <html> so the jump
-// is instant — otherwise the browser animates the scroll across pages.
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
     const html = document.documentElement;
     html.style.scrollBehavior = 'auto';
     window.scrollTo(0, 0);
-    // Re-enable smooth scrolling after the jump
     requestAnimationFrame(() => {
       html.style.scrollBehavior = '';
     });
@@ -32,11 +28,9 @@ function ScrollToTop() {
   return null;
 }
 
-// Lazy-load heavy pages so the initial bundle stays small
 const Profile = lazy(() => import('@/pages/Profile').then(m => ({ default: m.Profile })));
 const Admin = lazy(() => import('@/pages/Admin').then(m => ({ default: m.Admin })));
 
-// Spinner shown while lazy pages load
 function PageSpinner() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#f5f5f0]">
@@ -45,40 +39,26 @@ function PageSpinner() {
   );
 }
 
-// Redirects unauthenticated users to /login
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
-
-  // While the auth state is being restored from cookies/storage, show spinner
   if (isLoading) return <PageSpinner />;
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
-// Redirects non-admin users away from admin pages
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user, isLoading } = useAuthStore();
-
   if (isLoading) return <PageSpinner />;
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.role !== 'super_admin' && user?.role !== 'inventory_manager') {
     return <Navigate to="/" replace />;
   }
-
   return <>{children}</>;
 }
 
 function App() {
   const { fetchUser } = useAuthStore();
 
-  // Restore auth state on every page load / refresh
   useEffect(() => {
     fetchUser();
   }, []);
@@ -91,23 +71,31 @@ function App() {
           {/* ── Public routes (with layout) ── */}
           <Route element={<Layout />}>
             <Route path="/" element={<Home />} />
+
+            {/* ── Shop clean routes ── */}
             <Route path="/shop" element={<Shop />} />
+            <Route path="/shop/page/:page" element={<Shop />} />
+            <Route path="/shop/category/:name" element={<Shop />} />
+            <Route path="/shop/category/:name/page/:page" element={<Shop />} />
+            <Route path="/featured" element={<Shop />} />
+            <Route path="/featured/page/:page" element={<Shop />} />
+            <Route path="/new-arrivals" element={<Shop />} />
+            <Route path="/new-arrivals/page/:page" element={<Shop />} />
+            <Route path="/search/:query" element={<Shop />} />
+            <Route path="/search/:query/page/:page" element={<Shop />} />
+
             <Route path="/product/:id" element={<ProductDetail />} />
             <Route path="/cart" element={<Cart />} />
-            <Route path="/order-confirmation" element={<OrderConfirmation />} />
-
-            {/* Checkout — accessible to guests AND logged-in users.
-                Guest flow handled inside <Checkout /> itself. */}
             <Route path="/checkout" element={<Checkout />} />
+            <Route path="/order-confirmation" element={<OrderConfirmation />} />
           </Route>
 
           {/* ── Auth routes (no layout) ── */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          {/* Handles the redirect back from Google OAuth */}
           <Route path="/auth/callback" element={<GoogleCallback />} />
 
-          {/* ── Protected routes (must be logged in) ── */}
+          {/* ── Protected routes ── */}
           <Route element={<Layout />}>
             <Route
               path="/profile"
@@ -119,7 +107,7 @@ function App() {
             />
           </Route>
 
-          {/* ── Admin routes (must be admin/inventory_manager) ── */}
+          {/* ── Admin routes ── */}
           <Route element={<Layout />}>
             <Route
               path="/admin"
@@ -130,7 +118,15 @@ function App() {
               }
             />
             <Route
-              path="/admin/*"
+              path="/admin/:tab"
+              element={
+                <AdminRoute>
+                  <Admin />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/:tab/:id"
               element={
                 <AdminRoute>
                   <Admin />
