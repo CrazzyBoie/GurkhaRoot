@@ -279,29 +279,34 @@ export const updateStatus = async (req, res) => {
       updatedAt: now,
     };
 
-    // Prepare email user object
+    // Prepare email user object — try registered user first, then guest, then shipping snapshot
     let emailUser = null;
 
     if (orderData.userId) {
       const uSnap = await db.collection('users').doc(orderData.userId).get();
-      if (uSnap.exists) {
+      if (uSnap.exists && uSnap.data().email) {
         emailUser = { 
-          name: uSnap.data().name || 'Valued Customer', 
-          email: uSnap.data().email 
+          name: uSnap.data().name || orderData.shippingSnap?.fullName || 'Valued Customer', 
+          email: uSnap.data().email,
         };
         console.log('✅ Found registered user for status email:', emailUser.email);
       } else {
-        console.warn('⚠️ User ID found but user document missing:', orderData.userId);
+        console.warn('⚠️ User ID found but user document missing or has no email:', orderData.userId);
       }
     }
 
-    // Fallback to guest email if no registered user found
-    if (!emailUser && orderData.guestEmail) {
+    // Fallback 1: guest email stored on order
+    if (!emailUser?.email && orderData.guestEmail) {
       emailUser = { 
         name: orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer', 
-        email: orderData.guestEmail 
+        email: orderData.guestEmail,
       };
       console.log('✅ Using guest email for status update:', emailUser.email);
+    }
+
+    // Fallback 2: nothing found — log clearly so it's not a silent black hole
+    if (!emailUser?.email) {
+      console.error(`❌ Cannot send status email for order ${updated.orderNumber} (ID: ${id}): no email address resolved. userId=${orderData.userId}, guestEmail=${orderData.guestEmail}`);
     }
 
     // Send status update email if we have a recipient

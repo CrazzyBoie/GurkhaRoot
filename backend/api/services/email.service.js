@@ -171,11 +171,18 @@ export const sendOrderConfirmation = async (order, user, items) => {
 
 export const sendOrderStatusUpdate = async (order, user) => {
   const statusMessages = {
+    PENDING:    'Your order has been received and is awaiting processing.',
     PROCESSING: 'Your order is being prepared for shipment.',
-    SHIPPED: 'Your order has been shipped and is on its way!',
-    DELIVERED: 'Your order has been delivered. Enjoy!',
-    CANCELLED: 'Your order has been cancelled.',
+    SHIPPED:    'Your order has been shipped and is on its way!',
+    DELIVERED:  'Your order has been delivered. Enjoy!',
+    CANCELLED:  'Your order has been cancelled.',
   };
+
+  const recipientEmail = user?.email || order.guestEmail;
+  if (!recipientEmail) {
+    console.error(`❌ sendOrderStatusUpdate: no recipient email for order ${order.orderNumber}`);
+    return { success: false, error: 'No recipient email address available' };
+  }
 
   const html = `
     ${getEmailHeader(`Order ${order.status} - Gurkha Roots`)}
@@ -197,7 +204,7 @@ export const sendOrderStatusUpdate = async (order, user) => {
   `;
 
   return sendEmail({
-    to: user.email,
+    to: recipientEmail,
     subject: `Order ${order.status} - ${order.orderNumber}`,
     html,
   });
