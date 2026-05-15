@@ -1,13 +1,17 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
+const createTransporter = () => nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: parseInt(process.env.SMTP_PORT),
-  secure: false,
+  secure: parseInt(process.env.SMTP_PORT) === 465, // true only for port 465; STARTTLS for 587
+  requireTLS: parseInt(process.env.SMTP_PORT) === 587, // enforce STARTTLS on port 587
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 10000, // 10s
+  greetingTimeout:   10000,
+  socketTimeout:     15000,
 });
 
 const getEmailStyles = () => `
@@ -56,6 +60,7 @@ const getEmailFooter = () => `
 `;
 
 export const sendEmail = async ({ to, subject, html }) => {
+  const transporter = createTransporter();
   try {
     const info = await transporter.sendMail({
       from: `"Gurkha Roots" <${process.env.SMTP_USER}>`,
@@ -63,12 +68,13 @@ export const sendEmail = async ({ to, subject, html }) => {
       subject,
       html,
     });
-    
     console.log('Email sent:', info.messageId);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Email send error:', error);
     return { success: false, error: error.message };
+  } finally {
+    transporter.close();
   }
 };
 
