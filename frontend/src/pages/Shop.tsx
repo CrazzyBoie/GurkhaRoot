@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams, useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Filter, Grid3X3, LayoutList, ShoppingCart, X } from 'lucide-react';
 import { useProductStore, useCartStore } from '@/stores';
 import { Button } from '@/components/ui/button';
@@ -150,13 +150,12 @@ function ProductCard({ product }: { product: ProductType }) {
                     key={size}
                     onClick={e => { e.preventDefault(); e.stopPropagation(); setSelectedSize(size); }}
                     disabled={!available}
-                    className={`px-2.5 py-1 text-xs border font-medium transition-colors ${
-                      selectedSize === size
+                    className={`px-2.5 py-1 text-xs border font-medium transition-colors ${selectedSize === size
                         ? 'btn-flag text-white border-[#1a1a1a]'
                         : available
-                        ? 'border-[#ddd] text-white hover:border-[#1a1a1a]'
-                        : 'border-[#eee] text-[#ccc] cursor-not-allowed line-through'
-                    }`}
+                          ? 'border-[#ddd] text-white hover:border-[#1a1a1a]'
+                          : 'border-[#eee] text-[#ccc] cursor-not-allowed line-through'
+                      }`}
                   >
                     {size}
                   </button>
@@ -178,13 +177,12 @@ function ProductCard({ product }: { product: ProductType }) {
                     onClick={e => { e.preventDefault(); e.stopPropagation(); setSelectedColor(c.color); }}
                     disabled={!available}
                     title={c.color}
-                    className={`w-6 h-6 rounded-full border-2 transition-all ${
-                      selectedColor === c.color
+                    className={`w-6 h-6 rounded-full border-2 transition-all ${selectedColor === c.color
                         ? 'border-[#1a1a1a] scale-110'
                         : available
-                        ? 'border-transparent hover:border-[#888]'
-                        : 'opacity-30 cursor-not-allowed'
-                    }`}
+                          ? 'border-transparent hover:border-[#888]'
+                          : 'opacity-30 cursor-not-allowed'
+                      }`}
                     style={{ backgroundColor: c.hex }}
                   />
                 );
@@ -239,23 +237,23 @@ export function Shop() {
 
   // Detect which "mode" we're in based on the current path
   const pathname = window.location.pathname;
-  const isFeatured  = pathname === '/featured';
+  const isFeatured = pathname === '/featured';
   const isNewArrival = pathname === '/new-arrivals';
-  const isSearch    = pathname.startsWith('/search/');
-  const isCategory  = pathname.startsWith('/shop/category/');
+  const isSearch = pathname.startsWith('/search/');
+  const isCategory = pathname.startsWith('/shop/category/');
 
   const currentPage = pageParam ? parseInt(pageParam, 10) : 1;
 
   const { products, categories, pagination, isLoading, fetchProducts, fetchCategories } = useProductStore();
 
-  const [isFilterOpen, setIsFilterOpen]       = useState(false);
-  const [priceRange, setPriceRange]           = useState([0, 500]);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [priceRange, setPriceRange] = useState([0, 500]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(() =>
     isCategory && categoryParam ? [decodeURIComponent(categoryParam)] : []
   );
-  const [selectedSizes, setSelectedSizes]     = useState<string[]>([]);
-  const [sortBy, setSortBy]                   = useState('newest');
-  const [viewMode, setViewMode]               = useState<'grid' | 'list'>('grid');
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<'newest' | 'price_asc' | 'price_desc'>('newest');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   const sizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 
@@ -263,34 +261,34 @@ export function Shop() {
   const subtitle = isSearch
     ? `Search results for "${decodeURIComponent(searchQuery || '')}"`
     : isFeatured
-    ? 'Featured Products'
-    : isNewArrival
-    ? 'New Arrivals'
-    : isCategory && categoryParam
-    ? decodeURIComponent(categoryParam)
-    : 'All Products';
+      ? 'Featured Products'
+      : isNewArrival
+        ? 'New Arrivals'
+        : isCategory && categoryParam
+          ? decodeURIComponent(categoryParam)
+          : 'All Products';
 
   // ── Build API params from current route + filters ──────────────────────────
   const buildParams = useCallback(
     (overridePage?: number): Record<string, string | number | boolean> => {
       const params: Record<string, string | number | boolean> = {};
 
-      if (isFeatured)  params.featured   = true;
+      if (isFeatured) params.featured = true;
       if (isNewArrival) params.newArrival = true;
-      if (isSearch && searchQuery)   params.search   = decodeURIComponent(searchQuery);
+      if (isSearch && searchQuery) params.search = decodeURIComponent(searchQuery);
       if (isCategory && categoryParam) params.category = decodeURIComponent(categoryParam);
 
       if (selectedCategories.length > 0 && !isCategory) params.category = selectedCategories[0];
-      if (selectedSizes.length > 0)  params.size = selectedSizes[0];
-      if (priceRange[0] > 0)         params.minPrice = priceRange[0];
-      if (priceRange[1] < 500)       params.maxPrice = priceRange[1];
-      if (sortBy !== 'newest')       params.sort = sortBy;
+      if (selectedSizes.length > 0) params.size = selectedSizes[0];
+      if (priceRange[0] > 0) params.minPrice = priceRange[0];
+      if (priceRange[1] < 500) params.maxPrice = priceRange[1];
+      if (sortBy !== 'newest') params.sort = sortBy;
       if (overridePage && overridePage > 1) params.page = overridePage;
 
       return params;
     },
     [isFeatured, isNewArrival, isSearch, isCategory, searchQuery, categoryParam,
-     selectedCategories, selectedSizes, priceRange, sortBy]
+      selectedCategories, selectedSizes, priceRange, sortBy]
   );
 
   // ── Initial load ───────────────────────────────────────────────────────────
@@ -303,7 +301,7 @@ export function Shop() {
   // ── Apply sidebar filters ──────────────────────────────────────────────────
   const applyFilters = useCallback(() => {
     // Navigate to page 1 of whichever route we're on (dropping any /page/N suffix)
-    if (isFeatured)   navigate('/featured');
+    if (isFeatured) navigate('/featured');
     else if (isNewArrival) navigate('/new-arrivals');
     else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
     else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
@@ -318,14 +316,14 @@ export function Shop() {
 
     if (page <= 1) {
       // Return to root route without page segment
-      if (isFeatured)    navigate('/featured');
+      if (isFeatured) navigate('/featured');
       else if (isNewArrival) navigate('/new-arrivals');
       else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
       else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
       else navigate('/shop');
     } else {
       // Navigate to /xxx/page/N
-      if (isFeatured)    navigate(`/featured/page/${page}`);
+      if (isFeatured) navigate(`/featured/page/${page}`);
       else if (isNewArrival) navigate(`/new-arrivals/page/${page}`);
       else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}/page/${page}`);
       else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}/page/${page}`);
@@ -353,7 +351,7 @@ export function Shop() {
     setPriceRange([0, 500]);
     setSortBy('newest');
 
-    if (isFeatured)    navigate('/featured');
+    if (isFeatured) navigate('/featured');
     else if (isNewArrival) navigate('/new-arrivals');
     else if (isSearch && searchQuery) navigate(`/search/${encodeURIComponent(decodeURIComponent(searchQuery))}`);
     else if (isCategory && categoryParam) navigate(`/shop/category/${encodeURIComponent(decodeURIComponent(categoryParam))}`);
@@ -449,11 +447,10 @@ export function Shop() {
                     <button
                       key={size}
                       onClick={() => toggleSize(size)}
-                      className={`px-3 py-1 text-sm border transition-colors ${
-                        selectedSizes.includes(size)
+                      className={`px-3 py-1 text-sm border transition-colors ${selectedSizes.includes(size)
                           ? 'btn-flag text-white border-[#1a1a1a]'
                           : 'bg-white text-blue-200 border-[#ddd] hover:border-[#1a1a1a]'
-                      }`}
+                        }`}
                     >
                       {size}
                     </button>
@@ -482,9 +479,9 @@ export function Shop() {
                   <select
                     value={sortBy}
                     onChange={(e) => {
-                      setSortBy(e.target.value);
-                      // Re-fetch immediately when sort changes
-                      fetchProducts({ ...buildParams(currentPage), sort: e.target.value });
+                      const sort = e.target.value as 'newest' | 'price_asc' | 'price_desc';
+                      setSortBy(sort);
+                      fetchProducts({ ...buildParams(currentPage), sort });
                     }}
                     className="border border-[#ddd] rounded px-3 py-1.5 text-sm bg-white"
                   >
