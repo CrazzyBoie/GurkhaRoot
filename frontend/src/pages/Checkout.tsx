@@ -187,6 +187,58 @@ export function Checkout() {
     postalCode: '',
   });
 
+  const [postcodeLookupStatus, setPostcodeLookupStatus] = useState<'idle' | 'loading' | 'found' | 'notfound'>('idle');
+
+  // Auto-fill state & country when postcode changes
+  useEffect(() => {
+    const postcode = shippingAddress.postalCode.trim();
+    if (postcode.length < 3) {
+      setPostcodeLookupStatus('idle');
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setPostcodeLookupStatus('loading');
+      try {
+        const res = await fetch(`https://api.zippopotam.us/${encodeURIComponent(postcode)}`);
+        if (!res.ok) throw new Error('not found');
+        const data = await res.json();
+
+        const countryName = new Intl.DisplayNames(['en'], { type: 'region' }).of(data['country abbreviation']) || data['country abbreviation'];
+        const place = data.places?.[0];
+        const stateName = place?.state || '';
+
+        // Map returned country to the options available in the dropdown
+        const countryMap: Record<string, string> = {
+          'New Zealand': 'New Zealand',
+          'Australia': 'Australia',
+          'Nepal': 'Nepal',
+          'United States': 'United States',
+          'United Kingdom': 'United Kingdom',
+          'India': 'India',
+          'Canada': 'Canada',
+          'Germany': 'Germany',
+          'France': 'France',
+          'Singapore': 'Singapore',
+          'Japan': 'Japan',
+          'China': 'China',
+        };
+        const mappedCountry = countryMap[countryName] || 'Other';
+
+        setShippingAddress(prev => ({
+          ...prev,
+          state: stateName,
+          country: mappedCountry,
+        }));
+        setPostcodeLookupStatus('found');
+      } catch {
+        setPostcodeLookupStatus('notfound');
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [shippingAddress.postalCode]);
+
   // Load saved addresses
   useEffect(() => {
     if (isAuthenticated) {
@@ -453,7 +505,26 @@ export function Checkout() {
                       </div>
                       <div>
                         <Label>Postal Code</Label>
-                        <Input value={shippingAddress.postalCode} onChange={e => setShippingAddress({ ...shippingAddress, postalCode: e.target.value })} placeholder="2000" />
+                        <div className="relative">
+                          <Input
+                            value={shippingAddress.postalCode}
+                            onChange={e => setShippingAddress({ ...shippingAddress, postalCode: e.target.value })}
+                            placeholder="2000"
+                            className="pr-8"
+                          />
+                          {postcodeLookupStatus === 'loading' && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-[#c8a96e] border-t-transparent rounded-full animate-spin" />
+                          )}
+                          {postcodeLookupStatus === 'found' && (
+                            <Check className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-green-500" />
+                          )}
+                        </div>
+                        {postcodeLookupStatus === 'notfound' && (
+                          <p className="text-xs text-[#888] mt-1">Postcode not recognised — please fill in state &amp; country manually.</p>
+                        )}
+                        {postcodeLookupStatus === 'found' && (
+                          <p className="text-xs text-green-600 mt-1">State &amp; country auto-filled.</p>
+                        )}
                       </div>
                       <div>
                         <Label>Country</Label>

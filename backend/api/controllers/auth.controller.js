@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { getDb, newId, docToObj, snapToArr } from '../lib/firebase.js';
+import { getDb, newId, docToObj } from '../lib/firebase.js';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '../services/email.service.js';
 
@@ -40,7 +40,14 @@ export const register = async (req, res) => {
     const id  = newId();
     const now = new Date().toISOString();
 
-    const user = { id, name, email, passwordHash, phone: phone || null, role: 'customer', googleId: null, refreshToken: null, createdAt: now };
+    const user = {
+      id, name, email, passwordHash,
+      phone: phone || null,
+      role: 'customer',
+      googleId: null,
+      refreshToken: null,
+      createdAt: now,
+    };
     await db.collection('users').doc(id).set(user);
 
     const { accessToken, refreshToken } = generateTokens(user);
@@ -49,9 +56,15 @@ export const register = async (req, res) => {
     res.cookie('accessToken',  accessToken,  cookieOpts(ACCESS_TTL));
     res.cookie('refreshToken', refreshToken, cookieOpts(REFRESH_TTL));
 
-    sendWelcomeEmail(user).catch(console.error);
-
     const { passwordHash: _, refreshToken: __, ...safeUser } = user;
+
+    // ── Await email BEFORE responding so Vercel doesn't kill it early ─────────
+    try {
+      await sendWelcomeEmail(user);
+    } catch (emailErr) {
+      console.error('Welcome email failed:', emailErr);
+    }
+
     res.status(201).json({ message: 'Registration successful', user: safeUser });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ message: error.errors[0].message });
@@ -83,7 +96,10 @@ export const login = async (req, res) => {
     res.cookie('accessToken',  accessToken,  cookieOpts(ACCESS_TTL));
     res.cookie('refreshToken', refreshToken, cookieOpts(REFRESH_TTL));
 
-    res.json({ message: 'Login successful', user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+    res.json({
+      message: 'Login successful',
+      user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role },
+    });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ message: error.errors[0].message });
     console.error('Login error:', error);
@@ -100,7 +116,12 @@ export const logout = async (req, res) => {
       const snap = await db.collection('users').where('refreshToken', '==', rt).limit(1).get();
       if (!snap.empty) await snap.docs[0].ref.update({ refreshToken: null });
     }
-    const clearOpts = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', path: '/' };
+    const clearOpts = {
+      httpOnly: true,
+      secure:   process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      path: '/',
+    };
     res.clearCookie('accessToken',  clearOpts);
     res.clearCookie('refreshToken', clearOpts);
     res.json({ message: 'Logout successful' });
@@ -135,7 +156,6 @@ export const refresh = async (req, res) => {
 
 // ── Google callback ───────────────────────────────────────────────────────────
 export const googleCallback = async (req, res) => {
-  // Strip any trailing slash from CLIENT_URL so redirects don't become //path
   const clientUrl = (process.env.CLIENT_URL || '').replace(/\/+$/, '');
   try {
     const user = req.user;
@@ -149,8 +169,7 @@ export const googleCallback = async (req, res) => {
     res.redirect(`${clientUrl}/auth/callback#token=${accessToken}`);
   } catch (error) {
     console.error('Google callback error:', error);
-    const clientUrl2 = (process.env.CLIENT_URL || '').replace(/\/+$/, '');
-    res.redirect(`${clientUrl2}/login?error=auth_failed`);
+    res.redirect(`${clientUrl}/login?error=auth_failed`);
   }
 };
 
@@ -164,12 +183,17 @@ export const forgotPassword = async (req, res) => {
     const snap = await db.collection('users').where('email', '==', email).limit(1).get();
     if (snap.empty) return res.json({ message: 'If an account exists, a reset email has been sent' });
 
-    const userDoc = snap.docs[0];
+    const userDoc     = snap.docs[0];
     const resetToken  = crypto.randomBytes(32).toString('hex');
     const resetExpiry = Date.now() + 60 * 60 * 1000;
 
     await userDoc.ref.update({ refreshToken: `reset:${resetToken}:${resetExpiry}` });
-    await sendPasswordResetEmail({ id: userDoc.id, ...userDoc.data() }, resetToken);
+
+    try {
+      await sendPasswordResetEmail({ id: userDoc.id, ...userDoc.data() }, resetToken);
+    } catch (emailErr) {
+      console.error('Password reset email failed:', emailErr);
+    }
 
     res.json({ message: 'If an account exists, a reset email has been sent' });
   } catch (error) {
@@ -188,7 +212,7 @@ export const resetPassword = async (req, res) => {
     const db   = getDb();
     const snap = await db.collection('users')
       .where('refreshToken', '>=', `reset:${token}:`)
-      .where('refreshToken', '<', `reset:${token}:~`)
+      .where('refreshToken', '<',  `reset:${token}:~`)
       .limit(1).get();
 
     if (snap.empty) return res.status(400).json({ message: 'Invalid or expired reset token' });

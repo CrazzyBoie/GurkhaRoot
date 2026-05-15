@@ -20,13 +20,13 @@ const orderSchema = z.object({
     country:    z.string(),
     postalCode: z.string(),
   }).optional(),
-  guestEmail:    z.string().email().optional(),
-  guestName:     z.string().optional(),
-  paymentMethod: z.enum(['stripe', 'google_pay']),
-  couponCode:    z.string().optional(),
-  giftWrap:      z.coerce.boolean().default(false),
-  giftNote:      z.string().optional(),
-  shippingCost:  z.coerce.number().min(0).optional(),
+  guestEmail:     z.string().email().optional(),
+  guestName:      z.string().optional(),
+  paymentMethod:  z.enum(['stripe', 'google_pay']),
+  couponCode:     z.string().optional(),
+  giftWrap:       z.coerce.boolean().default(false),
+  giftNote:       z.string().optional(),
+  shippingCost:   z.coerce.number().min(0).optional(),
   shippingMethod: z.string().default('standard'),
 });
 
@@ -45,7 +45,7 @@ export const createOrder = async (req, res) => {
     if (!userId && !data.guestEmail)
       return res.status(400).json({ message: 'Email is required for guest checkout' });
 
-    let subtotal   = 0;
+    let subtotal = 0;
     const orderItems = [];
 
     for (const item of data.items) {
@@ -72,11 +72,12 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    // Coupon
+    // ── Coupon ────────────────────────────────────────────────────────────────
     let discount = 0;
     let couponId = null;
     if (data.couponCode) {
-      const cSnap = await db.collection('coupons').where('code', '==', data.couponCode.toUpperCase()).limit(1).get();
+      const cSnap = await db.collection('coupons')
+        .where('code', '==', data.couponCode.toUpperCase()).limit(1).get();
       if (!cSnap.empty) {
         const coupon = { id: cSnap.docs[0].id, ...cSnap.docs[0].data() };
         if (coupon.active && coupon.usedCount < coupon.usageLimit && new Date(coupon.expiryDate) > new Date()) {
@@ -87,27 +88,38 @@ export const createOrder = async (req, res) => {
       }
     }
 
-    // Address
-    let addressId  = data.addressId;
+    // ── Address ───────────────────────────────────────────────────────────────
+    let addressId = data.addressId;
     let shippingSnap;
 
     if (userId && addressId) {
       const aSnap   = await db.collection('addresses').doc(addressId).get();
       const address = docToObj(aSnap);
-      if (!address || address.userId !== userId) return res.status(400).json({ message: 'Invalid address' });
-      shippingSnap = { fullName: address.fullName, phone: address.phone, line1: address.line1, line2: address.line2, city: address.city, state: address.state, country: address.country, postalCode: address.postalCode };
+      if (!address || address.userId !== userId)
+        return res.status(400).json({ message: 'Invalid address' });
+      shippingSnap = {
+        fullName: address.fullName, phone: address.phone,
+        line1: address.line1, line2: address.line2,
+        city: address.city, state: address.state,
+        country: address.country, postalCode: address.postalCode,
+      };
     } else if (data.shippingAddress) {
       shippingSnap = data.shippingAddress;
       if (userId) {
         const newAddrId = newId();
-        await db.collection('addresses').doc(newAddrId).set({ userId, ...data.shippingAddress, isDefault: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        await db.collection('addresses').doc(newAddrId).set({
+          userId, ...data.shippingAddress,
+          isDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
         addressId = newAddrId;
       }
     } else {
       return res.status(400).json({ message: 'Shipping address is required' });
     }
 
-    // Shipping cost validation
+    // ── Shipping cost ─────────────────────────────────────────────────────────
     const expectedShipping = await getShippingCost(shippingSnap.country, data.shippingMethod);
     let shippingCost;
     if (data.shippingCost !== undefined) {
@@ -145,37 +157,48 @@ export const createOrder = async (req, res) => {
     };
     await db.collection('orders').doc(orderId).set(order);
 
-    // Decrement stock
+    // ── Decrement stock ───────────────────────────────────────────────────────
     for (const item of data.items) {
       const vSnap = await db.collection('variants').doc(item.variantId).get();
       if (vSnap.exists) await vSnap.ref.update({ stock: vSnap.data().stock - item.quantity });
     }
 
-    // Get user info for emails
+    // ── Resolve email recipient ───────────────────────────────────────────────
     let emailUser = { name: data.guestName || shippingSnap.fullName, email: data.guestEmail };
     if (userId) {
       const uSnap = await db.collection('users').doc(userId).get();
       if (uSnap.exists) emailUser = { name: uSnap.data().name, email: uSnap.data().email };
     }
 
-    // Send emails with logging
+    // ── Send emails — awaited so Vercel doesn't kill them early ──────────────
     const orderWithId = { ...order, id: orderId };
-    
-    sendOrderConfirmation(orderWithId, emailUser, orderItems)
-      .then(result => {
-        if (!result.success) console.error('❌ Order confirmation email failed:', result.error);
-        else console.log('✅ Order confirmation sent to customer + CC to admin');
-      })
-      .catch(err => console.error('❌ Order confirmation email error:', err));
 
-    sendAdminOrderNotification(orderWithId, emailUser, orderItems)
-      .then(result => {
-        if (!result.success) console.error('❌ Admin notification email failed:', result.error);
-        else console.log('✅ Admin notification sent');
-      })
-      .catch(err => console.error('❌ Admin notification email error:', err));
+    try {
+      const result = await sendOrderConfirmation(orderWithId, emailUser, orderItems);
+      if (!result.success) console.error('❌ Order confirmation email failed:', result.error);
+      else console.log('✅ Order confirmation sent to:', emailUser.email);
+    } catch (err) {
+      console.error('❌ Order confirmation email error:', err);
+    }
 
-    res.status(201).json({ message: 'Order created successfully', order: { id: orderId, orderNumber: order.orderNumber, total: order.total, status: order.status, createdAt: order.createdAt } });
+    try {
+      const result = await sendAdminOrderNotification(orderWithId, emailUser, orderItems);
+      if (!result.success) console.error('❌ Admin notification email failed:', result.error);
+      else console.log('✅ Admin notification sent');
+    } catch (err) {
+      console.error('❌ Admin notification email error:', err);
+    }
+
+    res.status(201).json({
+      message: 'Order created successfully',
+      order: {
+        id: orderId,
+        orderNumber: order.orderNumber,
+        total: order.total,
+        status: order.status,
+        createdAt: order.createdAt,
+      },
+    });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ message: error.errors[0].message });
     console.error('Create order error:', error);
@@ -188,11 +211,14 @@ export const getMyOrders = async (req, res) => {
   try {
     const userId = req.user.id;
     const { page = 1, limit = 10 } = req.query;
-    const db  = getDb();
-    const snap = await db.collection('orders').where('userId', '==', userId).orderBy('createdAt', 'desc').get();
-    const all  = snapToArr(snap);
-    const total = all.length;
-    const pageN = parseInt(page), limitN = parseInt(limit);
+    const db   = getDb();
+    const snap = await db.collection('orders')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+    const all    = snapToArr(snap);
+    const total  = all.length;
+    const pageN  = parseInt(page), limitN = parseInt(limit);
     const orders = all.slice((pageN - 1) * limitN, pageN * limitN);
     res.json({ orders, pagination: { page: pageN, limit: limitN, total, pages: Math.ceil(total / limitN) } });
   } catch (error) {
@@ -216,12 +242,12 @@ export const getOrder = async (req, res) => {
   }
 };
 
-// ── getAllOrders ──────────────────────────────────────────────────────────────
+// ── getAllOrders ───────────────────────────────────────────────────────────────
 export const getAllOrders = async (req, res) => {
   try {
     const { status, search, page = 1, limit = 20 } = req.query;
     const db   = getDb();
-    let snap   = status
+    const snap = status
       ? await db.collection('orders').where('status', '==', status).orderBy('createdAt', 'desc').get()
       : await db.collection('orders').orderBy('createdAt', 'desc').get();
 
@@ -235,9 +261,9 @@ export const getAllOrders = async (req, res) => {
       );
     }
 
-    const total  = orders.length;
-    const pageN  = parseInt(page), limitN = parseInt(limit);
-    const paged  = orders.slice((pageN - 1) * limitN, pageN * limitN);
+    const total = orders.length;
+    const pageN = parseInt(page), limitN = parseInt(limit);
+    const paged = orders.slice((pageN - 1) * limitN, pageN * limitN);
 
     // Attach user info
     for (const o of paged) {
@@ -260,7 +286,8 @@ export const updateStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const validStatuses = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
-    if (!validStatuses.includes(status)) return res.status(400).json({ message: 'Invalid status' });
+    if (!validStatuses.includes(status))
+      return res.status(400).json({ message: 'Invalid status' });
 
     const db   = getDb();
     const snap = await db.collection('orders').doc(id).get();
@@ -268,60 +295,47 @@ export const updateStatus = async (req, res) => {
 
     const orderData = snap.data();
     const now = new Date().toISOString();
-
     await snap.ref.update({ status, updatedAt: now });
-    
-    // Build complete updated order object with all fields needed for email
-    const updated = { 
-      id, 
-      ...orderData, 
-      status, 
-      updatedAt: now,
-    };
 
-    // Prepare email user object — try registered user first, then guest, then shipping snapshot
+    const updated = { id, ...orderData, status, updatedAt: now };
+
+    // ── Resolve email recipient ───────────────────────────────────────────────
     let emailUser = null;
 
     if (orderData.userId) {
       const uSnap = await db.collection('users').doc(orderData.userId).get();
       if (uSnap.exists && uSnap.data().email) {
-        emailUser = { 
-          name: uSnap.data().name || orderData.shippingSnap?.fullName || 'Valued Customer', 
+        emailUser = {
+          name:  uSnap.data().name || orderData.shippingSnap?.fullName || 'Valued Customer',
           email: uSnap.data().email,
         };
         console.log('✅ Found registered user for status email:', emailUser.email);
       } else {
-        console.warn('⚠️ User ID found but user document missing or has no email:', orderData.userId);
+        console.warn('⚠️ User doc missing or no email for userId:', orderData.userId);
       }
     }
 
-    // Fallback 1: guest email stored on order
     if (!emailUser?.email && orderData.guestEmail) {
-      emailUser = { 
-        name: orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer', 
+      emailUser = {
+        name:  orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer',
         email: orderData.guestEmail,
       };
       console.log('✅ Using guest email for status update:', emailUser.email);
     }
 
-    // Fallback 2: nothing found — log clearly so it's not a silent black hole
     if (!emailUser?.email) {
-      console.error(`❌ Cannot send status email for order ${updated.orderNumber} (ID: ${id}): no email address resolved. userId=${orderData.userId}, guestEmail=${orderData.guestEmail}`);
+      console.error(`❌ No email found for order ${updated.orderNumber} (ID: ${id})`);
     }
 
-    // Send status update email if we have a recipient
+    // ── Send status email — awaited so Vercel doesn't kill it early ───────────
     if (emailUser?.email) {
-      sendOrderStatusUpdate(updated, emailUser)
-        .then(result => {
-          if (!result.success) {
-            console.error('❌ Status email failed:', result.error);
-          } else {
-            console.log('✅ Status update email sent to:', emailUser.email, '| Status:', status);
-          }
-        })
-        .catch(err => console.error('❌ Status email error:', err));
-    } else {
-      console.warn(`⚠️ No email recipient found for order ${updated.orderNumber} (ID: ${id}). Status: ${status}`);
+      try {
+        const result = await sendOrderStatusUpdate(updated, emailUser);
+        if (!result.success) console.error('❌ Status email failed:', result.error);
+        else console.log('✅ Status update email sent to:', emailUser.email, '| Status:', status);
+      } catch (err) {
+        console.error('❌ Status email error:', err);
+      }
     }
 
     res.json({ message: 'Order status updated', order: updated });
