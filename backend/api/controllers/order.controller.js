@@ -127,6 +127,7 @@ export const createOrder = async (req, res) => {
       status:         'PENDING',
       userId:         userId || null,
       guestEmail:     userId ? null : data.guestEmail,
+      guestName:      userId ? null : data.guestName || null,
       addressId:      addressId || null,
       shippingSnap,
       paymentMethod:  data.paymentMethod,
@@ -157,8 +158,22 @@ export const createOrder = async (req, res) => {
       if (uSnap.exists) emailUser = { name: uSnap.data().name, email: uSnap.data().email };
     }
 
-    sendOrderConfirmation({ ...order, id: orderId }, emailUser, orderItems).catch(console.error);
-    sendAdminOrderNotification({ ...order, id: orderId }, emailUser, orderItems).catch(console.error);
+    // Send emails with logging
+    const orderWithId = { ...order, id: orderId };
+    
+    sendOrderConfirmation(orderWithId, emailUser, orderItems)
+      .then(result => {
+        if (!result.success) console.error('❌ Order confirmation email failed:', result.error);
+        else console.log('✅ Order confirmation sent to customer + CC to admin');
+      })
+      .catch(err => console.error('❌ Order confirmation email error:', err));
+
+    sendAdminOrderNotification(orderWithId, emailUser, orderItems)
+      .then(result => {
+        if (!result.success) console.error('❌ Admin notification email failed:', result.error);
+        else console.log('✅ Admin notification sent');
+      })
+      .catch(err => console.error('❌ Admin notification email error:', err));
 
     res.status(201).json({ message: 'Order created successfully', order: { id: orderId, orderNumber: order.orderNumber, total: order.total, status: order.status, createdAt: order.createdAt } });
   } catch (error) {
@@ -251,18 +266,62 @@ export const updateStatus = async (req, res) => {
     const snap = await db.collection('orders').doc(id).get();
     if (!snap.exists) return res.status(404).json({ message: 'Order not found' });
 
-    await snap.ref.update({ status, updatedAt: new Date().toISOString() });
-    const updated = { id, ...snap.data(), status };
+    const orderData = snap.data();
+    const now = new Date().toISOString();
 
-    if (snap.data().userId) {
-      const uSnap = await db.collection('users').doc(snap.data().userId).get();
-      if (uSnap.exists) sendOrderStatusUpdate(updated, { name: uSnap.data().name, email: uSnap.data().email }).catch(console.error);
-    } else if (snap.data().guestEmail) {
-      sendOrderStatusUpdate(updated, { name: snap.data().shippingSnap?.fullName || 'Customer', email: snap.data().guestEmail }).catch(console.error);
+    await snap.ref.update({ status, updatedAt: now });
+    
+    // Build complete updated order object with all fields needed for email
+    const updated = { 
+      id, 
+      ...orderData, 
+      status, 
+      updatedAt: now,
+    };
+
+    // Prepare email user object
+    let emailUser = null;
+
+    if (orderData.userId) {
+      const uSnap = await db.collection('users').doc(orderData.userId).get();
+      if (uSnap.exists) {
+        emailUser = { 
+          name: uSnap.data().name || 'Valued Customer', 
+          email: uSnap.data().email 
+        };
+        console.log('✅ Found registered user for status email:', emailUser.email);
+      } else {
+        console.warn('⚠️ User ID found but user document missing:', orderData.userId);
+      }
+    }
+
+    // Fallback to guest email if no registered user found
+    if (!emailUser && orderData.guestEmail) {
+      emailUser = { 
+        name: orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer', 
+        email: orderData.guestEmail 
+      };
+      console.log('✅ Using guest email for status update:', emailUser.email);
+    }
+
+    // Send status update email if we have a recipient
+    if (emailUser?.email) {
+      sendOrderStatusUpdate(updated, emailUser)
+        .then(result => {
+          if (!result.success) {
+            console.error('❌ Status email failed:', result.error);
+          } else {
+            console.log('✅ Status update email sent to:', emailUser.email, '| Status:', status);
+          }
+        })
+        .catch(err => console.error('❌ Status email error:', err));
+    } else {
+      console.warn(`⚠️ No email recipient found for order ${updated.orderNumber} (ID: ${id}). Status: ${status}`);
     }
 
     res.json({ message: 'Order status updated', order: updated });
   } catch (error) {
+    console.error('❌ Update status error:', error);
     res.status(500).json({ message: 'Failed to update status' });
   }
 };
