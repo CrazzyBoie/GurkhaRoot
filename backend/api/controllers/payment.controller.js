@@ -26,6 +26,60 @@ export const createPaymentIntent = async (req, res) => {
   }
 };
 
+// ── NEW: Refund payment when admin cancels order ───────────────────────────
+export const refundPayment = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ message: 'Order ID is required' });
+
+    const db = getDb();
+    const orderDoc = await db.collection('orders').doc(orderId).get();
+    
+    if (!orderDoc.exists) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    const orderData = orderDoc.data();
+    const stripePayId = orderData.stripePayId || orderData.paymentIntentId;
+
+    // Check if order was actually paid
+    if (!stripePayId) {
+      return res.status(400).json({ message: 'No payment found for this order' });
+    }
+
+    // Check if already refunded
+    if (orderData.refundedAt || orderData.refundStatus === 'refunded') {
+      return res.status(400).json({ message: 'Order has already been refunded' });
+    }
+
+    // Create refund in Stripe
+    const refund = await getStripe().refunds.create({
+      payment_intent: stripePayId,
+      reason: 'requested_by_customer', // or 'duplicate', 'fraudulent'
+    });
+
+    // Update order in Firebase
+    await orderDoc.ref.update({
+      status: 'CANCELLED',
+      refundStatus: 'refunded',
+      refundId: refund.id,
+      refundAmount: refund.amount / 100, // convert cents to dollars
+      refundedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Payment refunded successfully',
+      refundId: refund.id,
+      refundAmount: refund.amount / 100,
+    });
+  } catch (error) {
+    console.error('Refund error:', error.message);
+    res.status(500).json({ message: error.message || 'Failed to process refund' });
+  }
+};
+
 export const webhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;

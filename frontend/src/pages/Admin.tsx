@@ -34,28 +34,28 @@ const getAllowedStatuses = (currentStatus: string): string[] => {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  PENDING:    'bg-yellow-100 text-yellow-800',
+  PENDING: 'bg-yellow-100 text-yellow-800',
   PROCESSING: 'bg-blue-100 text-blue-800',
-  SHIPPED:    'bg-purple-100 text-purple-800',
-  DELIVERED:  'bg-green-100 text-green-800',
-  CANCELLED:  'bg-red-100 text-red-800',
+  SHIPPED: 'bg-purple-100 text-purple-800',
+  DELIVERED: 'bg-green-100 text-green-800',
+  CANCELLED: 'bg-red-100 text-red-800',
 };
 
 const ROLE_STYLES: Record<string, string> = {
-  customer:          'bg-gray-100 text-gray-700',
+  customer: 'bg-gray-100 text-gray-700',
   inventory_manager: 'bg-blue-100 text-blue-700',
-  super_admin:       'bg-[#DC143C]/20 text-[#8a6e3e]',
+  super_admin: 'bg-[#DC143C]/20 text-[#8a6e3e]',
 };
 
 const ROLE_ICONS: Record<string, React.ReactNode> = {
-  customer:          <Users className="w-3 h-3" />,
+  customer: <Users className="w-3 h-3" />,
   inventory_manager: <UserCog className="w-3 h-3" />,
-  super_admin:       <ShieldCheck className="w-3 h-3" />,
+  super_admin: <ShieldCheck className="w-3 h-3" />,
 };
 
 const METHOD_ICONS: Record<string, React.ReactNode> = {
-  standard:  <Truck className="w-4 h-4 text-blue-400" />,
-  express:   <Zap className="w-4 h-4 text-yellow-400" />,
+  standard: <Truck className="w-4 h-4 text-blue-400" />,
+  express: <Zap className="w-4 h-4 text-yellow-400" />,
   overnight: <Clock className="w-4 h-4 text-purple-400" />,
 };
 
@@ -166,7 +166,7 @@ export function Admin() {
     description: string;
     itemName?: string;
     onConfirm: () => void;
-  }>({ open: false, title: '', description: '', onConfirm: () => {} });
+  }>({ open: false, title: '', description: '', onConfirm: () => { } });
 
   const openConfirm = (title: string, description: string, itemName: string, onConfirm: () => void) => {
     setConfirmModal({ open: true, title, description, itemName, onConfirm });
@@ -356,21 +356,61 @@ export function Admin() {
   // ── Orders ─────────────────────────────────────────────────────────────────
   const handleUpdateOrderStatus = async (orderId: string, currentStatus: string, newStatus: string) => {
     if (newStatus === currentStatus) return;
+
     const allowed = getAllowedStatuses(currentStatus);
     if (!allowed.includes(newStatus)) {
       toast.error(`Cannot move order back from ${currentStatus} to ${newStatus}`);
       return;
     }
+
+    // ── REFUND LOGIC: If cancelling a paid order ──────────────────────────────
+    if (newStatus === 'CANCELLED' && currentStatus !== 'CANCELLED') {
+      const order = orders.find(o => o.id === orderId);
+
+      // Check if order was paid (has stripePayId or paymentIntentId)
+      if (order?.stripePayId || order?.paymentIntentId) {
+        const confirmRefund = window.confirm(
+          `This order has been paid ($${order.total?.toFixed(2)}). ` +
+          `Cancelling will automatically refund the full amount to the customer.\n\nProceed?`
+        );
+
+        if (!confirmRefund) return;
+
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch('/api/payments/refund', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token && { 'Authorization': `Bearer ${token}` })
+            },
+            body: JSON.stringify({ orderId }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            toast.error(data.message || 'Refund failed');
+            return;
+          }
+
+          toast.success(`Refunded $${data.refundAmount?.toFixed(2)} to customer`);
+        } catch (err) {
+          toast.error('Refund request failed');
+          return;
+        }
+      }
+    }
+
     try {
       await ordersApi.updateStatus(orderId, newStatus);
       toast.success('Order status updated');
-      // Update local state so the dropdown reflects immediately
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     } catch {
       toast.error('Failed to update order status');
     }
   };
-
+  
   // ── Coupons ────────────────────────────────────────────────────────────────
   const openCouponForm = (coupon?: any) => {
     if (coupon) {
@@ -702,12 +742,12 @@ export function Admin() {
   // ── Tab list ───────────────────────────────────────────────────────────────
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart2 },
-    { id: 'products',  label: 'Products',  icon: Package },
+    { id: 'products', label: 'Products', icon: Package },
     ...(isSuperAdmin ? [
-      { id: 'orders',   label: 'Orders',   icon: ShoppingBag },
-      { id: 'coupons',  label: 'Coupons',  icon: Tag },
+      { id: 'orders', label: 'Orders', icon: ShoppingBag },
+      { id: 'coupons', label: 'Coupons', icon: Tag },
       { id: 'shipping', label: 'Shipping', icon: Truck },
-      { id: 'users',    label: 'Users',    icon: Users },
+      { id: 'users', label: 'Users', icon: Users },
     ] : [
       { id: 'shipping', label: 'Shipping', icon: Truck },
     ]),
@@ -732,9 +772,8 @@ export function Admin() {
             <button
               key={id}
               onClick={() => setTab(id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === id ? 'border-[#DC143C] text-white' : 'border-transparent text-blue-300/70 hover:text-white'
-              }`}
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${activeTab === id ? 'border-[#DC143C] text-white' : 'border-transparent text-blue-300/70 hover:text-white'
+                }`}
             >
               <Icon className="w-4 h-4" />
               {label}
@@ -773,9 +812,9 @@ export function Admin() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
                   { label: 'Total Revenue', value: `$${stats.totalRevenue?.toFixed(2) || '0.00'}`, color: 'text-[#DC143C]' },
-                  { label: 'Total Orders',  value: stats.totalOrders,  color: 'text-blue-600' },
-                  { label: 'Products',      value: stats.totalProducts, color: 'text-green-600' },
-                  { label: 'Customers',     value: stats.totalUsers,    color: 'text-purple-600' },
+                  { label: 'Total Orders', value: stats.totalOrders, color: 'text-blue-600' },
+                  { label: 'Products', value: stats.totalProducts, color: 'text-green-600' },
+                  { label: 'Customers', value: stats.totalUsers, color: 'text-purple-600' },
                 ].map((m, i) => (
                   <Card key={i} className="flag-card border-0 shadow-sm">
                     <CardContent className="p-6">
@@ -1056,7 +1095,7 @@ export function Admin() {
               <Input placeholder="Search by order # or customer..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadOrders()} className="max-w-xs" />
               <select value={orderStatus} onChange={e => { setOrderStatus(e.target.value); setOrderPage(1); }} className="border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm">
                 <option value="">All Statuses</option>
-                {['PENDING','PROCESSING','SHIPPED','DELIVERED','CANCELLED'].map(s => <option key={s} value={s}>{s}</option>)}
+                {['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <Button variant="outline" onClick={loadOrders}>Search</Button>
               <Button variant="outline" onClick={exportOrders} className="text-blue-200 border-white/20 hover:bg-white/10 ml-auto"><Download className="w-3 h-3 mr-1" />Export CSV</Button>
@@ -1252,7 +1291,7 @@ export function Admin() {
               </button>
             </div>
             {shippingLoading ? (
-              <div className="space-y-3">{[1,2,3].map(n => <div key={n} className="h-16 bg-white/5 animate-pulse rounded-lg" />)}</div>
+              <div className="space-y-3">{[1, 2, 3].map(n => <div key={n} className="h-16 bg-white/5 animate-pulse rounded-lg" />)}</div>
             ) : (
               <>
                 {shippingSubTab === 'countries' && (
