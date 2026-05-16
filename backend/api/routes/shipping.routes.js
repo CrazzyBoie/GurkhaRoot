@@ -8,6 +8,8 @@ import {
   deleteCountry,
   getAdminMethods,
   updateMethod,
+  getInternational,
+  updateInternational,
 } from '../controllers/shipping.controller.js';
 import { authenticate, requireRole } from '../middleware/auth.middleware.js';
 
@@ -29,5 +31,9 @@ router.delete('/admin/countries/:id', requireRole('super_admin'), deleteCountry)
 
 router.get('/admin/methods', getAdminMethods);
 router.patch('/admin/methods/:id', requireRole('super_admin'), updateMethod);
+
+// International default — readable by any admin, writable only by super_admin
+router.get('/admin/international', getInternational);
+router.patch('/admin/international', requireRole('super_admin'), updateInternational);
 
 export default router;

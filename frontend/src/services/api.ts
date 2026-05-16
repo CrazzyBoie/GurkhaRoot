@@ -180,6 +180,11 @@ export const adminShippingApi = {
   updateMethod: (id: string, data: Partial<{
     label: string; description: string; cost: number; active: boolean;
   }>) => api.patch(`/shipping/admin/methods/${id}`, data),
+
+  getInternational: () => api.get('/shipping/admin/international'),
+  updateInternational: (data: Partial<{
+    label: string; description: string; cost: number; active: boolean;
+  }>) => api.patch('/shipping/admin/international', data),
 };
 
 export const adminApi = {

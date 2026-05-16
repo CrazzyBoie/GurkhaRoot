@@ -142,6 +142,11 @@ export function Admin() {
   });
   const [savingMethod, setSavingMethod] = useState(false);
 
+  // International default shipping
+  const [intlShipping, setIntlShipping] = useState<any>(null);
+  const [intlForm, setIntlForm] = useState({ label: 'International Shipping', description: '10–21 business days', cost: '25', active: true });
+  const [savingIntl, setSavingIntl] = useState(false);
+
   // ── Tab load effects ───────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === 'dashboard') loadDashboard();
@@ -213,15 +218,44 @@ export function Admin() {
   const loadShipping = async () => {
     setShippingLoading(true);
     try {
-      const [countriesRes] = await Promise.all([
+      const [countriesRes, , intlRes] = await Promise.all([
         adminShippingApi.getCountries(),
         adminShippingApi.getMethods(),
+        adminShippingApi.getInternational(),
       ]);
       setShippingCountries(countriesRes.data.countries || []);
+      const intl = intlRes.data.international;
+      if (intl) {
+        setIntlShipping(intl);
+        setIntlForm({
+          label: intl.label || 'International Shipping',
+          description: intl.description || '10–21 business days',
+          cost: String(intl.cost ?? 25),
+          active: intl.active !== false,
+        });
+      }
     } catch {
       toast.error('Failed to load shipping data');
     } finally {
       setShippingLoading(false);
+    }
+  };
+
+  const handleSaveIntl = async () => {
+    setSavingIntl(true);
+    try {
+      const res = await adminShippingApi.updateInternational({
+        label: intlForm.label.trim(),
+        description: intlForm.description.trim(),
+        cost: parseFloat(intlForm.cost) || 0,
+        active: intlForm.active,
+      });
+      setIntlShipping(res.data.international);
+      toast.success('International shipping updated');
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update international shipping');
+    } finally {
+      setSavingIntl(false);
     }
   };
 
@@ -1157,6 +1191,63 @@ export function Admin() {
                       <p className="text-sm font-semibold text-white">Shipping Methods</p>
                       <p className="text-xs text-blue-300/70">Per-country rate overrides. Methods are auto-created when you add a country.</p>
                     </div>
+
+                    {/* ── International Default ── */}
+                    <Card className="flag-card border-0 shadow-sm border border-blue-400/20">
+                      <CardContent className="p-0">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20 rounded-t-lg">
+                          <Globe className="w-5 h-5 text-blue-400" />
+                          <div className="flex-1">
+                            <p className="font-medium text-white text-sm">International Default</p>
+                            <p className="text-xs text-blue-300/70">Applied to any country not listed above</p>
+                          </div>
+                          {intlShipping && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${intlShipping.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                              {intlShipping.active ? 'Active' : 'Inactive'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-4 space-y-3">
+                          {isSuperAdmin ? (
+                            <>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <Label className="text-slate-300 text-xs">Label</Label>
+                                  <Input value={intlForm.label} onChange={e => setIntlForm({ ...intlForm, label: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white text-sm" />
+                                </div>
+                                <div>
+                                  <Label className="text-slate-300 text-xs">Cost ($)</Label>
+                                  <Input type="number" min="0" step="0.01" value={intlForm.cost} onChange={e => setIntlForm({ ...intlForm, cost: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white text-sm" />
+                                </div>
+                              </div>
+                              <div>
+                                <Label className="text-slate-300 text-xs">Description (shown to customers)</Label>
+                                <Input value={intlForm.description} onChange={e => setIntlForm({ ...intlForm, description: e.target.value })} placeholder="10–21 business days" className="mt-1 bg-slate-800 border-slate-600 text-white text-sm" />
+                              </div>
+                              <div className="flex items-center justify-between pt-1">
+                                <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
+                                  <input type="checkbox" checked={intlForm.active} onChange={e => setIntlForm({ ...intlForm, active: e.target.checked })} className="w-4 h-4 accent-[#DC143C]" />
+                                  Active (show to customers)
+                                </label>
+                                <Button onClick={handleSaveIntl} disabled={savingIntl} className="bg-[#DC143C] text-white hover:bg-[#b01030] text-sm px-4">
+                                  {savingIntl ? 'Saving...' : 'Save'}
+                                </Button>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex items-center justify-between text-sm">
+                              <div>
+                                <p className="text-white font-medium">{intlShipping?.label || 'International Shipping'}</p>
+                                <p className="text-blue-300/70 text-xs">{intlShipping?.description || '10–21 business days'}</p>
+                              </div>
+                              <span className={`font-semibold ${(intlShipping?.cost ?? 0) === 0 ? 'text-green-400' : 'text-white'}`}>
+                                {(intlShipping?.cost ?? 0) === 0 ? 'Free' : `$${(intlShipping?.cost ?? 0).toFixed(2)}`}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
                     {shippingCountries.length === 0 ? (
                       <Card className="flag-card border-0 shadow-sm"><CardContent className="p-8 text-center text-blue-300/70">No countries yet — add a country first and its methods will appear here.</CardContent></Card>
                     ) : (

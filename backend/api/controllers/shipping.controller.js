@@ -163,3 +163,48 @@ export const updateMethod = async (req, res) => {
     res.status(500).json({ message: 'Failed to update method' });
   }
 };
+// ── Admin: International Default ──────────────────────────────────────────────
+export const getInternational = async (req, res) => {
+  try {
+    const { getInternationalDefault } = await import('../utils/shipping.js');
+    const intl = await getInternationalDefault();
+    res.json({ international: intl });
+  } catch (err) {
+    console.error('[shipping] getInternational:', err.message);
+    res.status(500).json({ message: 'Failed to get international shipping default' });
+  }
+};
+
+export const updateInternational = async (req, res) => {
+  try {
+    const { label, description, cost, active } = req.body;
+    const data = {};
+    if (label       !== undefined) data.label       = label.trim();
+    if (description !== undefined) data.description = description.trim();
+    if (cost        !== undefined) data.cost        = parseFloat(cost);
+    if (active      !== undefined) data.active      = active;
+    if (!Object.keys(data).length) return res.status(400).json({ message: 'No fields to update' });
+
+    const db   = getDb();
+    const ref  = db.collection('shippingInternational').doc('default');
+    const snap = await ref.get();
+    if (snap.exists) {
+      await ref.update(data);
+    } else {
+      // Create with sensible defaults merged with the patch
+      await ref.set({
+        label: 'International Shipping',
+        description: '10–21 business days',
+        cost: 25,
+        active: true,
+        ...data,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const updated = (await ref.get()).data();
+    res.json({ message: 'International shipping updated', international: { id: 'default', ...updated } });
+  } catch (err) {
+    console.error('[shipping] updateInternational:', err.message);
+    res.status(500).json({ message: 'Failed to update international shipping' });
+  }
+};
