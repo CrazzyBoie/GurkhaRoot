@@ -154,13 +154,17 @@ export const createProduct = async (req, res) => {
 
     await db.collection('products').doc(id).set({ ...data, images, createdAt: now });
 
-    // Store variants as subcollection
+    // Store variants in collection AND embed in product doc (both must stay in sync)
     const batch = db.batch();
+    const variantsWithIds = [];
     for (const v of data.variants) {
       const vId = newId();
       batch.set(db.collection('variants').doc(vId), { ...v, productId: id });
+      variantsWithIds.push({ ...v, id: vId, productId: id });
     }
     await batch.commit();
+    // Embed variants array in product doc so admin edit page reads correct stock
+    await db.collection('products').doc(id).update({ variants: variantsWithIds });
 
     const varSnap = await db.collection('variants').where('productId', '==', id).get();
     res.status(201).json({ message: 'Product created successfully', product: { id, ...data, images, createdAt: now, variants: snapToArr(varSnap) } });
@@ -201,17 +205,22 @@ export const updateProduct = async (req, res) => {
     }
 
     if (data.variants) {
-      // Replace variants
+      // Replace variants in collection
       const oldVars = await db.collection('variants').where('productId', '==', id).get();
       const delBatch = db.batch();
       oldVars.forEach(d => delBatch.delete(d.ref));
       await delBatch.commit();
 
       const addBatch = db.batch();
+      const variantsWithIds = [];
       for (const v of data.variants) {
-        addBatch.set(db.collection('variants').doc(newId()), { ...v, productId: id });
+        const vId = newId();
+        addBatch.set(db.collection('variants').doc(vId), { ...v, productId: id });
+        variantsWithIds.push({ ...v, id: vId, productId: id });
       }
       await addBatch.commit();
+      // Keep embedded array in product doc in sync so admin stock counts match
+      await snap.ref.update({ variants: variantsWithIds });
     }
 
     const varSnap = await db.collection('variants').where('productId', '==', id).get();

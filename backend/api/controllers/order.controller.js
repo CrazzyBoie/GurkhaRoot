@@ -135,6 +135,7 @@ export const createOrder = async (req, res) => {
       subtotal += product.price * item.quantity;
       orderItems.push({
         productId: product.id,
+        variantId: item.variantId,   // stored so restoreStock can find it on cancel/return
         name:      product.name,
         image:     product.images?.[0] || '',
         size:      variant.size,
@@ -230,10 +231,30 @@ export const createOrder = async (req, res) => {
     };
     await db.collection('orders').doc(orderId).set(order);
 
-    // ── Decrement stock ───────────────────────────────────────────────────────
+    // ── Decrement stock (variants collection + embedded product doc array) ─────
     for (const item of data.items) {
+      const qty = item.quantity || 1;
+
+      // 1. variants collection
       const vSnap = await db.collection('variants').doc(item.variantId).get();
-      if (vSnap.exists) await vSnap.ref.update({ stock: vSnap.data().stock - item.quantity });
+      if (vSnap.exists) {
+        await vSnap.ref.update({ stock: vSnap.data().stock - qty });
+      }
+
+      // 2. embedded variants array inside product doc
+      const pRef = db.collection('products').doc(item.productId || vSnap.data()?.productId);
+      const pDoc = await pRef.get();
+      if (pDoc.exists) {
+        const embeddedVariants = pDoc.data().variants;
+        if (Array.isArray(embeddedVariants) && embeddedVariants.length > 0) {
+          const updated = embeddedVariants.map(v => {
+            const match = v.id === item.variantId
+              || (v.size === vSnap.data()?.size && v.color === vSnap.data()?.color);
+            return match ? { ...v, stock: Math.max(0, (v.stock || 0) - qty) } : v;
+          });
+          await pRef.update({ variants: updated });
+        }
+      }
     }
 
     // ── Resolve email recipient ───────────────────────────────────────────────
@@ -354,32 +375,67 @@ export const getAllOrders = async (req, res) => {
 };
 
 // -- restoreStock: increments variant stock for each item in a cancelled/returned order --
+// Updates BOTH the variants collection (used by checkout/stock checks)
+// AND the embedded variants array inside the product doc (shown in admin edit page)
 const restoreStock = async (db, items = []) => {
   for (const item of items) {
     if (!item.variantId && !item.productId) continue;
+    const qty = item.quantity || 1;
     try {
-      // items snapshot stores variantId at order-creation time
-      // Fall back to a product-level search if variantId is missing
-      let vRef = null;
+      // ── 1. Update variants COLLECTION ──────────────────────────────────────
       if (item.variantId) {
-        vRef = db.collection('variants').doc(item.variantId);
+        const vRef = db.collection('variants').doc(item.variantId);
+        const vDoc = await vRef.get();
+        if (vDoc.exists) {
+          const currentStock = vDoc.data().stock || 0;
+          await vRef.update({ stock: currentStock + qty });
+          console.log('[restoreStock] variants collection: restored', qty,
+            'to', item.variantId, '|', currentStock, '->', currentStock + qty);
+        } else {
+          console.warn('[restoreStock] Variant doc not found in collection:', item.variantId);
+        }
       } else {
-        // legacy: find variant by productId (best-effort)
+        // Legacy fallback: find by size+color+productId in collection
         const vSnap = await db.collection('variants')
-          .where('productId', '==', item.productId).limit(1).get();
-        if (!vSnap.empty) vRef = vSnap.docs[0].ref;
+          .where('productId', '==', item.productId)
+          .where('size',      '==', item.size)
+          .where('color',     '==', item.color)
+          .limit(1).get();
+        if (!vSnap.empty) {
+          const vDoc = vSnap.docs[0];
+          const currentStock = vDoc.data().stock || 0;
+          await vDoc.ref.update({ stock: currentStock + qty });
+          console.log('[restoreStock] variants collection (fallback): restored', qty,
+            'to', vDoc.id, '|', currentStock, '->', currentStock + qty);
+        } else {
+          console.warn('[restoreStock] No variant found in collection for item:', item);
+        }
       }
-      if (!vRef) { console.warn('[restoreStock] No variant ref for item:', item); continue; }
 
-      const vDoc = await vRef.get();
-      if (!vDoc.exists) { console.warn('[restoreStock] Variant not found:', item.variantId); continue; }
-
-      const currentStock = vDoc.data().stock || 0;
-      await vRef.update({ stock: currentStock + (item.quantity || 1) });
-      console.log('[restoreStock] Restored', item.quantity, 'units to variant', vDoc.id,
-        '| stock', currentStock, '->', currentStock + (item.quantity || 1));
+      // ── 2. Update embedded variants array INSIDE product doc ───────────────
+      // (admin edit page reads from here; must stay in sync)
+      if (item.productId) {
+        const pRef = db.collection('products').doc(item.productId);
+        const pDoc = await pRef.get();
+        if (pDoc.exists) {
+          const embeddedVariants = pDoc.data().variants;
+          if (Array.isArray(embeddedVariants) && embeddedVariants.length > 0) {
+            const updated = embeddedVariants.map(v => {
+              const match = item.variantId
+                ? v.id === item.variantId
+                : v.size === item.size && v.color === item.color;
+              if (match) {
+                return { ...v, stock: (v.stock || 0) + qty };
+              }
+              return v;
+            });
+            await pRef.update({ variants: updated });
+            console.log('[restoreStock] product doc embedded variants updated for product:', item.productId);
+          }
+        }
+      }
     } catch (err) {
-      console.error('[restoreStock] Failed for item', item.variantId, ':', err.message);
+      console.error('[restoreStock] Failed for item', item.variantId || item.productId, ':', err.message);
     }
   }
 };
