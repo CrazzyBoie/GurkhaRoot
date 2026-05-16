@@ -200,9 +200,8 @@ export function Checkout() {
     const timer = setTimeout(async () => {
       setPostcodeLookupStatus('loading');
       try {
-        // Include country in query when one is selected to improve accuracy
-        const countryParam = shippingAddress.country ? `&countrycodes=${encodeURIComponent(shippingAddress.country)}` : '';
-        const url = `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(postcode)}${countryParam}&format=json&addressdetails=1&limit=1`;
+        // No countrycodes filter — always detect country purely from postcode
+        const url = `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(postcode)}&format=json&addressdetails=1&limit=1`;
         const res = await fetch(url, {
           headers: { 'Accept-Language': 'en', 'User-Agent': 'GurkhaRoots-Checkout/1.0' },
         });
@@ -211,6 +210,15 @@ export function Checkout() {
         if (!results.length) throw new Error('not found');
 
         const addr = results[0].address;
+        // Extract city — Nominatim uses different keys per country
+        const city =
+          addr.city ||
+          addr.town ||
+          addr.village ||
+          addr.suburb ||
+          addr.municipality ||
+          addr.hamlet ||
+          '';
         // Extract state — Nominatim uses different keys per country
         const state =
           addr.state ||
@@ -224,7 +232,8 @@ export function Checkout() {
 
         setShippingAddress(prev => ({
           ...prev,
-          state,
+          ...(city ? { city } : {}),
+          ...(state ? { state } : {}),
           ...(countryIso ? { country: countryIso } : {}),
         }));
         setPostcodeLookupStatus('found');
@@ -520,7 +529,7 @@ export function Checkout() {
                           <p className="text-xs text-[#888] mt-1">Postcode not recognised — please fill in state &amp; country manually.</p>
                         )}
                         {postcodeLookupStatus === 'found' && (
-                          <p className="text-xs text-green-600 mt-1">Country &amp; state auto-filled ✓</p>
+                          <p className="text-xs text-green-600 mt-1">City, state &amp; country auto-filled ✓</p>
                         )}
                       </div>
                       <div>
