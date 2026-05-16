@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart2, Package, ShoppingBag, Users, Tag, AlertTriangle,
   Plus, Trash2, Edit2, X, Upload, Search, UserCog, Shield, ShieldCheck, KeyRound, Eye, EyeOff,
-  Truck, Globe, Zap, Clock, Check, Pencil, Download, Copy, CalendarRange, UserPlus,
+  Truck, Globe, Zap, Clock, Check, Pencil, Download, Copy, CalendarRange, UserPlus, Lock,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -15,6 +15,23 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent } from '../components/ui/card';
 import { useAuthStore } from '../stores';
 import { toast } from 'sonner';
+
+// ── Order status progression (forward-only) ────────────────────────────────
+const STATUS_ORDER = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+
+const getStatusRank = (status: string) => STATUS_ORDER.indexOf(status);
+
+// Returns only the statuses that are allowed from the current status
+const getAllowedStatuses = (currentStatus: string): string[] => {
+  const rank = getStatusRank(currentStatus);
+  if (rank === -1) return STATUS_ORDER;
+  // CANCELLED is always terminal — no changes once cancelled
+  if (currentStatus === 'CANCELLED') return ['CANCELLED'];
+  // DELIVERED is terminal
+  if (currentStatus === 'DELIVERED') return ['DELIVERED'];
+  // Otherwise allow current + anything forward
+  return STATUS_ORDER.filter((s, i) => i >= rank);
+};
 
 const STATUS_COLORS: Record<string, string> = {
   PENDING:    'bg-yellow-100 text-yellow-800',
@@ -43,7 +60,6 @@ const METHOD_ICONS: Record<string, React.ReactNode> = {
 };
 
 export function Admin() {
-  // ── Clean URL routing: /admin/:tab ─────────────────────────────────────────
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
   const activeTab = tab || 'dashboard';
@@ -137,15 +153,25 @@ export function Admin() {
   const [savingCountry, setSavingCountry] = useState(false);
   const [editingMethod, setEditingMethod] = useState<any>(null);
   const [showMethodModal, setShowMethodModal] = useState(false);
-  const [methodForm, setMethodForm] = useState({
-    label: '', description: '', cost: '', active: true,
-  });
+  const [methodForm, setMethodForm] = useState({ label: '', description: '', cost: '', active: true });
   const [savingMethod, setSavingMethod] = useState(false);
-
-  // International default shipping
   const [intlShipping, setIntlShipping] = useState<any>(null);
   const [intlForm, setIntlForm] = useState({ label: 'International Shipping', description: '10–21 business days', cost: '25', active: true });
   const [savingIntl, setSavingIntl] = useState(false);
+
+  // ── Confirm Delete Modal ───────────────────────────────────────────────────
+  const [confirmModal, setConfirmModal] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    itemName?: string;
+    onConfirm: () => void;
+  }>({ open: false, title: '', description: '', onConfirm: () => {} });
+
+  const openConfirm = (title: string, description: string, itemName: string, onConfirm: () => void) => {
+    setConfirmModal({ open: true, title, description, itemName, onConfirm });
+  };
+  const closeConfirm = () => setConfirmModal(prev => ({ ...prev, open: false }));
 
   // ── Tab load effects ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -309,23 +335,37 @@ export function Admin() {
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    if (!confirm('Delete this product?')) return;
-    try {
-      await productsApi.deleteProduct(id);
-      toast.success('Product deleted');
-      loadProducts();
-    } catch {
-      toast.error('Failed to delete product');
-    }
+  const handleDeleteProduct = (id: string, name: string) => {
+    openConfirm(
+      'Delete Product',
+      'This product and all its variants and images will be permanently removed. This action cannot be undone.',
+      name,
+      async () => {
+        try {
+          await productsApi.deleteProduct(id);
+          toast.success('Product deleted');
+          loadProducts();
+        } catch {
+          toast.error('Failed to delete product');
+        }
+        closeConfirm();
+      }
+    );
   };
 
   // ── Orders ─────────────────────────────────────────────────────────────────
-  const handleUpdateOrderStatus = async (id: string, status: string) => {
+  const handleUpdateOrderStatus = async (orderId: string, currentStatus: string, newStatus: string) => {
+    if (newStatus === currentStatus) return;
+    const allowed = getAllowedStatuses(currentStatus);
+    if (!allowed.includes(newStatus)) {
+      toast.error(`Cannot move order back from ${currentStatus} to ${newStatus}`);
+      return;
+    }
     try {
-      await ordersApi.updateStatus(id, status);
+      await ordersApi.updateStatus(orderId, newStatus);
       toast.success('Order status updated');
-      loadOrders();
+      // Update local state so the dropdown reflects immediately
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     } catch {
       toast.error('Failed to update order status');
     }
@@ -378,10 +418,22 @@ export function Admin() {
     }
   };
 
-  const handleDeleteCoupon = async (id: string) => {
-    if (!confirm('Delete this coupon?')) return;
-    try { await couponsApi.deleteCoupon(id); toast.success('Coupon deleted'); loadCoupons(); }
-    catch { toast.error('Failed to delete coupon'); }
+  const handleDeleteCoupon = (id: string, code: string) => {
+    openConfirm(
+      'Delete Coupon',
+      'This coupon code will be permanently removed and can no longer be redeemed by customers.',
+      code,
+      async () => {
+        try {
+          await couponsApi.deleteCoupon(id);
+          toast.success('Coupon deleted');
+          loadCoupons();
+        } catch {
+          toast.error('Failed to delete coupon');
+        }
+        closeConfirm();
+      }
+    );
   };
 
   const handleToggleCoupon = async (coupon: any) => {
@@ -413,16 +465,25 @@ export function Admin() {
     } finally { setSavingUser(false); }
   };
 
-  const handleDeleteUser = async (id: string) => {
-    if (!confirm('Permanently delete this user? This cannot be undone.')) return;
-    setDeletingUserId(id);
-    try {
-      await userApi.deleteUser(id);
-      toast.success('User deleted');
-      loadUsers();
-    } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to delete user');
-    } finally { setDeletingUserId(null); }
+  const handleDeleteUser = (id: string, name: string) => {
+    openConfirm(
+      'Delete User',
+      'This account and all associated data will be permanently deleted. The user will lose all order history and access.',
+      name,
+      async () => {
+        setDeletingUserId(id);
+        try {
+          await userApi.deleteUser(id);
+          toast.success('User deleted');
+          loadUsers();
+        } catch (e: any) {
+          toast.error(e.response?.data?.message || 'Failed to delete user');
+        } finally {
+          setDeletingUserId(null);
+        }
+        closeConfirm();
+      }
+    );
   };
 
   const openResetModal = (u: any) => { setSetPasswordUser(u); setNewPassword(''); setShowPassword(false); setShowSetPasswordModal(true); };
@@ -484,10 +545,22 @@ export function Admin() {
     } finally { setSavingCountry(false); }
   };
 
-  const handleDeleteCountry = async (id: string) => {
-    if (!confirm('Delete this country and all its shipping methods?')) return;
-    try { await adminShippingApi.deleteCountry(id); toast.success('Country deleted'); loadShipping(); }
-    catch (e: any) { toast.error(e.response?.data?.message || 'Failed to delete country'); }
+  const handleDeleteCountry = (id: string, name: string) => {
+    openConfirm(
+      'Delete Country',
+      'This will permanently remove the country and all its associated shipping methods. Orders already placed will not be affected.',
+      name,
+      async () => {
+        try {
+          await adminShippingApi.deleteCountry(id);
+          toast.success('Country deleted');
+          loadShipping();
+        } catch (e: any) {
+          toast.error(e.response?.data?.message || 'Failed to delete country');
+        }
+        closeConfirm();
+      }
+    );
   };
 
   const handleToggleCountry = async (country: any) => {
@@ -504,7 +577,6 @@ export function Admin() {
     setMethodForm({ label: method.label, description: method.description, cost: String(method.cost), active: method.active });
     setShowMethodModal(true);
   };
-
   const closeMethodModal = () => { setShowMethodModal(false); setEditingMethod(null); };
 
   const handleSaveMethod = async () => {
@@ -583,7 +655,7 @@ export function Admin() {
   };
 
   // ── Export helpers ─────────────────────────────────────────────────────────
-  const exportToCSV = (filename: string, rows: string[][], headers: string[]) => {
+  const exportToCSV = (filename: string, rows: any[][], headers: string[]) => {
     const escape = (v: any) => {
       const s = String(v ?? '').replace(/"/g, '""');
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
@@ -641,6 +713,7 @@ export function Admin() {
     ]),
   ];
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen">
       <div className="flag-header py-10">
@@ -660,9 +733,7 @@ export function Admin() {
               key={id}
               onClick={() => setTab(id)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === id
-                  ? 'border-[#DC143C] text-white'
-                  : 'border-transparent text-blue-300/70 hover:text-white'
+                activeTab === id ? 'border-[#DC143C] text-white' : 'border-transparent text-blue-300/70 hover:text-white'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -689,7 +760,8 @@ export function Admin() {
               </div>
               <div className="flex gap-1.5 flex-wrap">
                 {[7, 30, 90, 365].map(d => (
-                  <button key={d} onClick={() => { setDashDateRange(d); setDashDateFrom(''); setDashDateTo(''); }} className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${dashDateRange === d && !dashDateFrom ? 'bg-[#DC143C] text-white' : 'bg-white/10 text-blue-200 hover:bg-white/20'}`}>
+                  <button key={d} onClick={() => { setDashDateRange(d); setDashDateFrom(''); setDashDateTo(''); }}
+                    className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${dashDateRange === d && !dashDateFrom ? 'bg-[#DC143C] text-white' : 'bg-white/10 text-blue-200 hover:bg-white/20'}`}>
                     {d === 365 ? '1Y' : `${d}D`}
                   </button>
                 ))}
@@ -714,6 +786,7 @@ export function Admin() {
                 ))}
               </div>
             )}
+
             {chartData.length > 0 && (
               <Card className="flag-card border-0 shadow-sm">
                 <CardContent className="p-6">
@@ -736,6 +809,7 @@ export function Admin() {
                 </CardContent>
               </Card>
             )}
+
             <div className="grid lg:grid-cols-2 gap-6">
               <Card className="flag-card border-0 shadow-sm">
                 <CardContent className="p-6">
@@ -802,6 +876,7 @@ export function Admin() {
                 <Button onClick={() => openProductForm()} className="bg-[#1a1a1a] text-white"><Plus className="w-4 h-4 mr-2" /> Add Product</Button>
               </div>
             </div>
+
             {showBulkProductForm && (
               <Card className="flag-card border-0 shadow-sm border-l-4 border-l-[#DC143C]">
                 <CardContent className="p-6">
@@ -867,6 +942,7 @@ export function Admin() {
                 </CardContent>
               </Card>
             )}
+
             {showProductForm && (
               <Card className="flag-card border-0 shadow-sm">
                 <CardContent className="p-6">
@@ -917,6 +993,7 @@ export function Admin() {
                 </CardContent>
               </Card>
             )}
+
             <Card className="flag-card border-0 shadow-sm">
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
@@ -934,12 +1011,27 @@ export function Admin() {
                     <tbody className="divide-y divide-white/10">
                       {products.map(product => (
                         <tr key={product.id} className="hover:bg-white/5">
-                          <td className="py-3 px-4"><div className="flex items-center gap-3"><img src={product.images?.[0] || '/placeholder.jpg'} alt={product.name} className="w-10 h-10 object-cover rounded" onError={e => { (e.target as HTMLImageElement).src = '/placeholder.jpg'; }} /><span className="font-medium text-white">{product.name}</span></div></td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-3">
+                              <img src={product.images?.[0] || '/placeholder.jpg'} alt={product.name} className="w-10 h-10 object-cover rounded" onError={e => { (e.target as HTMLImageElement).src = '/placeholder.jpg'; }} />
+                              <span className="font-medium text-white">{product.name}</span>
+                            </div>
+                          </td>
                           <td className="py-3 px-4 text-blue-200">{product.category}</td>
                           <td className="py-3 px-4 font-medium">${product.price.toFixed(2)}</td>
                           <td className="py-3 px-4 text-blue-200">{product.variants?.length || 0}</td>
-                          <td className="py-3 px-4"><div className="flex gap-1">{product.featured && <span className="text-xs bg-[#DC143C] text-white px-1.5 py-0.5 rounded">Featured</span>}{product.newArrival && <span className="text-xs bg-[#1a1a1a] text-white px-1.5 py-0.5 rounded">New</span>}</div></td>
-                          <td className="py-3 px-4 text-right"><div className="flex justify-end gap-2"><Button variant="outline" size="sm" onClick={() => openProductForm(product)}><Edit2 className="w-3 h-3" /></Button><Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteProduct(product.id)}><Trash2 className="w-3 h-3" /></Button></div></td>
+                          <td className="py-3 px-4">
+                            <div className="flex gap-1">
+                              {product.featured && <span className="text-xs bg-[#DC143C] text-white px-1.5 py-0.5 rounded">Featured</span>}
+                              {product.newArrival && <span className="text-xs bg-[#1a1a1a] text-white px-1.5 py-0.5 rounded">New</span>}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" onClick={() => openProductForm(product)}><Edit2 className="w-3 h-3" /></Button>
+                              <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteProduct(product.id, product.name)}><Trash2 className="w-3 h-3" /></Button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -985,17 +1077,51 @@ export function Admin() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/10">
-                      {orders.map(order => (
-                        <tr key={order.id} className="hover:bg-white/5">
-                          <td className="py-3 px-4 font-medium">{order.orderNumber}</td>
-                          <td className="py-3 px-4 text-blue-200">{order.user?.name || order.guestEmail || 'Guest'}{!order.userId && <span className="ml-1 text-xs bg-gray-100 text-gray-600 px-1 rounded">Guest</span>}</td>
-                          <td className="py-3 px-4 text-blue-200">{new Date(order.createdAt).toLocaleDateString('en-AU')}</td>
-                          <td className="py-3 px-4 font-semibold">${order.total?.toFixed(2)}</td>
-                          <td className="py-3 px-4 text-blue-200 capitalize">{order.paymentMethod === 'google_pay' ? 'Google Pay' : 'Card'}</td>
-                          <td className="py-3 px-4"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[order.status]}`}>{order.status}</span></td>
-                          <td className="py-3 px-4 text-right"><select defaultValue={order.status} onChange={e => handleUpdateOrderStatus(order.id, e.target.value)} className="border border-white/15 rounded bg-white/10 text-white px-2 py-1 text-xs">{['PENDING','PROCESSING','SHIPPED','DELIVERED','CANCELLED'].map(s => <option key={s} value={s}>{s}</option>)}</select></td>
-                        </tr>
-                      ))}
+                      {orders.map(order => {
+                        const allowed = getAllowedStatuses(order.status);
+                        const isTerminal = order.status === 'DELIVERED' || order.status === 'CANCELLED';
+                        return (
+                          <tr key={order.id} className="hover:bg-white/5">
+                            <td className="py-3 px-4 font-medium">{order.orderNumber}</td>
+                            <td className="py-3 px-4 text-blue-200">
+                              {order.user?.name || order.guestEmail || 'Guest'}
+                              {!order.userId && <span className="ml-1 text-xs bg-gray-100 text-gray-600 px-1 rounded">Guest</span>}
+                            </td>
+                            <td className="py-3 px-4 text-blue-200">{new Date(order.createdAt).toLocaleDateString('en-AU')}</td>
+                            <td className="py-3 px-4 font-semibold">${order.total?.toFixed(2)}</td>
+                            <td className="py-3 px-4 text-blue-200 capitalize">{order.paymentMethod === 'google_pay' ? 'Google Pay' : 'Card'}</td>
+                            <td className="py-3 px-4">
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[order.status]}`}>{order.status}</span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              {isTerminal ? (
+                                /* Terminal status — locked, no dropdown */
+                                <div className="flex items-center justify-end gap-1.5 text-xs text-blue-300/50">
+                                  <Lock className="w-3 h-3" />
+                                  <span>{order.status}</span>
+                                </div>
+                              ) : (
+                                <select
+                                  value={order.status}
+                                  onChange={e => handleUpdateOrderStatus(order.id, order.status, e.target.value)}
+                                  className="border border-white/15 rounded bg-white/10 text-white px-2 py-1 text-xs"
+                                >
+                                  {STATUS_ORDER.map(s => (
+                                    <option
+                                      key={s}
+                                      value={s}
+                                      disabled={!allowed.includes(s)}
+                                      className={!allowed.includes(s) ? 'text-slate-500 bg-slate-800' : 'bg-slate-900 text-white'}
+                                    >
+                                      {s}{!allowed.includes(s) ? ' (locked)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1093,7 +1219,7 @@ export function Admin() {
                             <div className="flex justify-end gap-2">
                               <Button variant="outline" size="sm" onClick={() => openCouponForm(coupon)} title="Edit"><Edit2 className="w-3 h-3" /></Button>
                               <Button variant="outline" size="sm" onClick={() => handleToggleCoupon(coupon)} title={coupon.active ? 'Deactivate' : 'Activate'}>{coupon.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}</Button>
-                              <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCoupon(coupon.id)} title="Delete"><Trash2 className="w-3 h-3" /></Button>
+                              <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCoupon(coupon.id, coupon.code)} title="Delete"><Trash2 className="w-3 h-3" /></Button>
                             </div>
                           </td>
                         </tr>
@@ -1171,7 +1297,7 @@ export function Admin() {
                                       <div className="flex justify-end gap-2">
                                         <Button variant="outline" size="sm" onClick={() => handleToggleCountry(country)} title={country.active ? 'Disable' : 'Enable'}>{country.active ? <X className="w-3 h-3 text-orange-400" /> : <Check className="w-3 h-3 text-green-400" />}</Button>
                                         <Button variant="outline" size="sm" onClick={() => openCountryModal(country)}><Pencil className="w-3 h-3" /></Button>
-                                        <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCountry(country.id)}><Trash2 className="w-3 h-3" /></Button>
+                                        <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteCountry(country.id, country.name)}><Trash2 className="w-3 h-3" /></Button>
                                       </div>
                                     </td>
                                   )}
@@ -1185,14 +1311,13 @@ export function Admin() {
                     </Card>
                   </div>
                 )}
+
                 {shippingSubTab === 'methods' && (
                   <div className="space-y-4">
                     <div>
                       <p className="text-sm font-semibold text-white">Shipping Methods</p>
                       <p className="text-xs text-blue-300/70">Per-country rate overrides. Methods are auto-created when you add a country.</p>
                     </div>
-
-                    {/* ── International Default ── */}
                     <Card className="flag-card border-0 shadow-sm border border-blue-400/20">
                       <CardContent className="p-0">
                         <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20 rounded-t-lg">
@@ -1333,16 +1458,26 @@ export function Admin() {
                     <tbody className="divide-y divide-white/10">
                       {usersList.map(u => (
                         <tr key={u.id} className="hover:bg-white/5">
-                          <td className="py-3 px-4"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-[#1a1a1a] flex items-center justify-center text-white text-xs font-bold shrink-0">{u.name?.charAt(0)?.toUpperCase() || '?'}</div><div><p className="font-medium text-white">{u.name}{u.id === user?.id && <span className="ml-1.5 text-xs text-[#DC143C]">(you)</span>}</p><p className="text-xs text-blue-300/70">{u.email}</p></div></div></td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-[#1a1a1a] flex items-center justify-center text-white text-xs font-bold shrink-0">{u.name?.charAt(0)?.toUpperCase() || '?'}</div>
+                              <div>
+                                <p className="font-medium text-white">{u.name}{u.id === user?.id && <span className="ml-1.5 text-xs text-[#DC143C]">(you)</span>}</p>
+                                <p className="text-xs text-blue-300/70">{u.email}</p>
+                              </div>
+                            </div>
+                          </td>
                           <td className="py-3 px-4 text-blue-200">{u.phone || <span className="text-[#ccc]">—</span>}</td>
                           <td className="py-3 px-4"><span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_STYLES[u.role] || 'bg-gray-100 text-gray-600'}`}>{ROLE_ICONS[u.role]}{u.role.replace('_', ' ')}</span></td>
                           <td className="py-3 px-4 text-blue-200">{u._count?.orders ?? 0}</td>
                           <td className="py-3 px-4 text-blue-200">{new Date(u.createdAt).toLocaleDateString('en-AU')}</td>
-                          <td className="py-3 px-4 text-right"><div className="flex justify-end gap-2">
-                            <Button variant="outline" size="sm" onClick={() => openUserModal(u)} disabled={u.id === user?.id} title={u.id === user?.id ? 'Use Profile page to edit your own account' : 'Edit user'}><Edit2 className="w-3 h-3" /></Button>
-                            <Button variant="outline" size="sm" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => openResetModal(u)} disabled={u.id === user?.id} title="Set password"><KeyRound className="w-3 h-3" /></Button>
-                            <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteUser(u.id)} disabled={u.id === user?.id || deletingUserId === u.id} title={u.id === user?.id ? 'Cannot delete your own account' : 'Delete user'}>{deletingUserId === u.id ? <span className="text-xs">...</span> : <Trash2 className="w-3 h-3" />}</Button>
-                          </div></td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="outline" size="sm" onClick={() => openUserModal(u)} disabled={u.id === user?.id} title={u.id === user?.id ? 'Use Profile page to edit your own account' : 'Edit user'}><Edit2 className="w-3 h-3" /></Button>
+                              <Button variant="outline" size="sm" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => openResetModal(u)} disabled={u.id === user?.id} title="Set password"><KeyRound className="w-3 h-3" /></Button>
+                              <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteUser(u.id, u.name)} disabled={u.id === user?.id || deletingUserId === u.id} title={u.id === user?.id ? 'Cannot delete your own account' : 'Delete user'}>{deletingUserId === u.id ? <span className="text-xs">...</span> : <Trash2 className="w-3 h-3" />}</Button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                       {usersList.length === 0 && <tr><td colSpan={6} className="py-12 text-center text-blue-300/70">No users found</td></tr>}
@@ -1361,6 +1496,55 @@ export function Admin() {
           </div>
         )}
       </div>
+
+      {/* ════════════════════════════════════════════════
+          MODALS
+      ════════════════════════════════════════════════ */}
+
+      {/* ── Confirm Delete Modal ── */}
+      {confirmModal.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeConfirm} />
+          <div className="relative bg-[#0f172a] rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Red accent bar */}
+            <div className="h-1 w-full bg-gradient-to-r from-[#DC143C] to-[#ff4d6d]" />
+            <div className="p-6">
+              {/* Icon + title */}
+              <div className="flex items-start gap-4 mb-5">
+                <div className="w-11 h-11 rounded-full bg-red-950/60 border border-red-800/40 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-[#DC143C]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-white">{confirmModal.title}</h3>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">{confirmModal.description}</p>
+                </div>
+              </div>
+              {/* Item name pill */}
+              {confirmModal.itemName && (
+                <div className="flex items-center gap-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2.5 mb-5">
+                  <span className="text-xs text-slate-400 shrink-0">Deleting:</span>
+                  <span className="text-sm font-medium text-white truncate">{confirmModal.itemName}</span>
+                </div>
+              )}
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 bg-[#DC143C] hover:bg-[#b01030] active:scale-95 text-white text-sm font-medium py-2.5 rounded-lg transition-all"
+                >
+                  Delete permanently
+                </button>
+                <button
+                  onClick={closeConfirm}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-sm font-medium py-2.5 rounded-lg transition-all border border-slate-600"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Add / Edit Country modal ── */}
       {showCountryModal && (
