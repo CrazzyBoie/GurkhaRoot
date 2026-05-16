@@ -116,22 +116,73 @@ export const webhook = async (req, res) => {
   try {
     event = getStripe().webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
+    console.error('[webhook] Signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   if (event.type === 'payment_intent.succeeded') {
     const pi = event.data.object;
+    const db = getDb();
+    const now = new Date().toISOString();
+    const update = { stripePayId: pi.id, status: 'PROCESSING', updatedAt: now };
+
+    // Primary: orderId embedded in metadata (set at intent creation)
     if (pi.metadata.orderId) {
-      const db = getDb();
-      await db.collection('orders').doc(pi.metadata.orderId).update({
-        stripePayId: pi.id,
-        status:      'PROCESSING',
-        updatedAt:   new Date().toISOString(),
-      }).catch(console.error);
+      console.log('[webhook] Updating order by metadata.orderId:', pi.metadata.orderId);
+      await db.collection('orders').doc(pi.metadata.orderId).update(update).catch(console.error);
+    } else {
+      // Fallback: search for order that stored this paymentIntentId at creation
+      console.log('[webhook] No metadata.orderId -- searching by paymentIntentId field:', pi.id);
+      const snap = await db.collection('orders').where('paymentIntentId', '==', pi.id).limit(1).get().catch(() => null);
+      if (snap && !snap.empty) {
+        console.log('[webhook] Found order by paymentIntentId field:', snap.docs[0].id);
+        await snap.docs[0].ref.update(update).catch(console.error);
+      } else {
+        console.warn('[webhook] Could not find order for PaymentIntent:', pi.id);
+      }
     }
   }
 
   res.json({ received: true });
+};
+
+// ── confirmPayment: called by frontend after Stripe confirms ─────────────────
+// Writes stripePayId + PROCESSING status without relying on webhook timing
+export const confirmPayment = async (req, res) => {
+  try {
+    const { orderId, paymentIntentId } = req.body;
+    if (!orderId || !paymentIntentId)
+      return res.status(400).json({ message: 'orderId and paymentIntentId are required' });
+
+    // Verify the PaymentIntent is actually succeeded on Stripe's side
+    const pi = await getStripe().paymentIntents.retrieve(paymentIntentId);
+    if (pi.status !== 'succeeded')
+      return res.status(400).json({ message: 'Payment has not succeeded yet. Status: ' + pi.status });
+
+    const db = getDb();
+    const orderDoc = await db.collection('orders').doc(orderId).get();
+    if (!orderDoc.exists) return res.status(404).json({ message: 'Order not found' });
+
+    const orderData = orderDoc.data();
+
+    // Idempotent: if already recorded, just return success
+    if (orderData.stripePayId) {
+      console.log('[confirmPayment] stripePayId already set on order:', orderId);
+      return res.json({ message: 'Payment already confirmed', order: { id: orderId, ...orderData } });
+    }
+
+    await orderDoc.ref.update({
+      stripePayId: pi.id,
+      status:      'PROCESSING',
+      updatedAt:   new Date().toISOString(),
+    });
+
+    console.log('[confirmPayment] Wrote stripePayId to order:', orderId, '|', pi.id);
+    res.json({ message: 'Payment confirmed', stripePayId: pi.id });
+  } catch (error) {
+    console.error('[confirmPayment] Error:', error.message);
+    res.status(500).json({ message: error.message || 'Failed to confirm payment' });
+  }
 };
 
 export const getPaymentStatus = async (req, res) => {

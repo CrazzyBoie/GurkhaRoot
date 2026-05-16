@@ -144,6 +144,10 @@ export const paymentApi = {
     api.get(`/payments/status/${paymentIntentId}`),
   refund: (orderId: string) =>
     api.post('/payments/refund', { orderId }),
+  // Call this after Stripe payment succeeds — writes stripePayId to Firestore
+  // without depending on webhook timing
+  confirm: (orderId: string, paymentIntentId: string) =>
+    api.post('/payments/confirm', { orderId, paymentIntentId }),
 };
 
 export const reviewsApi = {
