@@ -28,6 +28,7 @@ const orderSchema = z.object({
   giftNote:       z.string().optional(),
   shippingCost:   z.coerce.number().min(0).optional(),
   shippingMethod: z.string().default('standard'),
+  stripePayId:    z.string().optional(),  // PaymentIntent ID sent by frontend after payment
 });
 
 const generateOrderNumber = () => {
@@ -206,7 +207,7 @@ export const createOrder = async (req, res) => {
     const now     = new Date().toISOString();
     const order   = {
       orderNumber:    generateOrderNumber(),
-      status:         'PENDING',
+      status:         data.stripePayId ? 'PROCESSING' : 'PENDING',
       userId:         userId || null,
       guestEmail:     userId ? null : data.guestEmail,
       guestName:      userId ? null : data.guestName || null,
@@ -220,7 +221,7 @@ export const createOrder = async (req, res) => {
       discount,
       giftWrap:       data.giftWrap,
       giftNote:       data.giftNote || null,
-      stripePayId:    null,
+      stripePayId:    data.stripePayId || null,
       items:          orderItems,
       createdAt:      now,
       updatedAt:      now,
