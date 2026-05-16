@@ -24,9 +24,11 @@ const getEmailStyles = () => `
     .content { padding: 40px 30px; }
     .footer { background: #1a1a1a; padding: 30px; text-align: center; color: #888; font-size: 12px; }
     .btn { display: inline-block; background: #c8a96e; color: #1a1a1a; padding: 12px 30px; text-decoration: none; font-weight: bold; border-radius: 4px; }
+    .btn-outline { display: inline-block; background: transparent; color: #c8a96e; padding: 12px 30px; text-decoration: none; font-weight: bold; border-radius: 4px; border: 2px solid #c8a96e; }
     .order-item { border-bottom: 1px solid #e0e0e0; padding: 15px 0; }
     .order-item:last-child { border-bottom: none; }
     .text-gold { color: #c8a96e; }
+    .track-box { background: #f5f5f0; border-left: 4px solid #c8a96e; padding: 20px 24px; border-radius: 4px; margin: 24px 0; }
   </style>
 `;
 
@@ -119,6 +121,10 @@ export const sendOrderConfirmation = async (order, user, items) => {
     </div>
   `).join('');
 
+  // Build the tracking URL — works for both guests and registered users
+  const recipientEmail = user.email || order.guestEmail;
+  const trackingUrl = `${process.env.CLIENT_URL}/track-order?orderNumber=${encodeURIComponent(order.orderNumber)}&email=${encodeURIComponent(recipientEmail)}`;
+
   const html = `
     ${getEmailHeader('Order Confirmation - Gurkha Roots')}
       <h2>Order Confirmed!</h2>
@@ -161,6 +167,15 @@ export const sendOrderConfirmation = async (order, user, items) => {
         ${order.shippingSnap.city}, ${order.shippingSnap.state} ${order.shippingSnap.postalCode}<br>
         ${order.shippingSnap.country}
       </p>
+
+      <!-- ── Track your order ───────────────────────────────────────────────── -->
+      <div class="track-box">
+        <p style="margin: 0 0 8px; font-weight: bold; color: #1a1a1a;">📦 Track Your Order</p>
+        <p style="margin: 0 0 16px; color: #555; font-size: 14px;">
+          Click the button below at any time to check your order status — no account needed.
+        </p>
+        <a href="${trackingUrl}" class="btn">Track Order</a>
+      </div>
       
       <p style="margin-top: 30px;">We'll send you another email when your order ships.</p>
       
@@ -190,6 +205,8 @@ export const sendOrderStatusUpdate = async (order, user) => {
     return { success: false, error: 'No recipient email address available' };
   }
 
+  const trackingUrl = `${process.env.CLIENT_URL}/track-order?orderNumber=${encodeURIComponent(order.orderNumber)}&email=${encodeURIComponent(recipientEmail)}`;
+
   const html = `
     ${getEmailHeader(`Order ${order.status} - Gurkha Roots`)}
       <h2>Order Update</h2>
@@ -202,7 +219,7 @@ export const sendOrderStatusUpdate = async (order, user) => {
       </div>
       
       <p style="text-align: center; margin: 30px 0;">
-        <a href="${process.env.CLIENT_URL}/profile" class="btn">View Order Details</a>
+        <a href="${trackingUrl}" class="btn">Track Your Order</a>
       </p>
       
       <p>Roots Run Deep,<br>The Gurkha Roots Team</p>

@@ -99,6 +99,9 @@ export const ordersApi = {
     api.get('/orders', { params }),
   updateStatus: (id: string, status: string) =>
     api.patch(`/orders/${id}/status`, { status }),
+  // ── Public guest order tracking (no auth required) ──────────────────────────
+  trackOrder: (orderNumber: string, email: string) =>
+    api.get('/orders/track', { params: { orderNumber, email } }),
 };
 
 export const userApi = {

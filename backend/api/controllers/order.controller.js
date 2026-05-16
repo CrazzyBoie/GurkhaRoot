@@ -35,6 +35,76 @@ const generateOrderNumber = () => {
   return `GR-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 };
 
+// ── trackOrder (PUBLIC — no auth required) ────────────────────────────────────
+// GET /orders/track?orderNumber=GR-...&email=guest@example.com
+export const trackOrder = async (req, res) => {
+  try {
+    const { orderNumber, email } = req.query;
+
+    if (!orderNumber || !email) {
+      return res.status(400).json({ message: 'Order number and email are required' });
+    }
+
+    const db   = getDb();
+    const snap = await db.collection('orders')
+      .where('orderNumber', '==', orderNumber.trim())
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ message: 'Order not found. Please check your order number and email.' });
+    }
+
+    const orderDoc  = snap.docs[0];
+    const orderData = { id: orderDoc.id, ...orderDoc.data() };
+
+    // ── Verify the email matches the order ────────────────────────────────────
+    const normalizedInput = email.trim().toLowerCase();
+    let emailMatches = false;
+
+    // Check guest email directly on order
+    if (orderData.guestEmail && orderData.guestEmail.toLowerCase() === normalizedInput) {
+      emailMatches = true;
+    }
+
+    // Check registered user's email
+    if (!emailMatches && orderData.userId) {
+      const uSnap = await db.collection('users').doc(orderData.userId).get();
+      if (uSnap.exists && uSnap.data().email?.toLowerCase() === normalizedInput) {
+        emailMatches = true;
+      }
+    }
+
+    if (!emailMatches) {
+      // Return same message as "not found" to avoid leaking order existence
+      return res.status(404).json({ message: 'Order not found. Please check your order number and email.' });
+    }
+
+    // ── Return safe order data (no internal user ids, tokens, etc.) ────────────
+    const safeOrder = {
+      id:             orderData.id,
+      orderNumber:    orderData.orderNumber,
+      status:         orderData.status,
+      createdAt:      orderData.createdAt,
+      updatedAt:      orderData.updatedAt,
+      items:          orderData.items,
+      total:          orderData.total,
+      discount:       orderData.discount,
+      shippingCost:   orderData.shippingCost,
+      shippingMethod: orderData.shippingMethod,
+      paymentMethod:  orderData.paymentMethod,
+      shippingSnap:   orderData.shippingSnap,
+      giftWrap:       orderData.giftWrap,
+      giftNote:       orderData.giftNote,
+    };
+
+    res.json({ order: safeOrder });
+  } catch (error) {
+    console.error('Track order error:', error);
+    res.status(500).json({ message: 'Failed to track order' });
+  }
+};
+
 // ── createOrder ───────────────────────────────────────────────────────────────
 export const createOrder = async (req, res) => {
   try {

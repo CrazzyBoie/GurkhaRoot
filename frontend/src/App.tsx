@@ -13,6 +13,7 @@ import {
   OrderConfirmation,
   GoogleCallback,
 } from '@/pages';
+import { TrackOrder } from '@/pages/TrackOrder'; // ← new import
 import './App.css';
 
 function ScrollToTop() {
@@ -88,6 +89,9 @@ function App() {
             <Route path="/cart" element={<Cart />} />
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/order-confirmation" element={<OrderConfirmation />} />
+
+            {/* ── Guest order tracking ── */}
+            <Route path="/track-order" element={<TrackOrder />} />
           </Route>
 
           {/* ── Auth routes (no layout) ── */}
