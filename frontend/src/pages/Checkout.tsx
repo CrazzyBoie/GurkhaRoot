@@ -378,11 +378,29 @@ export function Checkout() {
     }
   };
 
-  const handlePaymentSuccess = async (paymentIntentId: string) => {
+  const handlePaymentSuccess = async (confirmedPaymentIntentId: string) => {
     setIsLoading(true);
     try {
-      const orderPayload = { ...pendingOrderData, stripePayId: paymentIntentId };
+      // Include both fields: stripePayId (paid) + paymentIntentId (for webhook fallback)
+      const orderPayload = {
+        ...pendingOrderData,
+        stripePayId: confirmedPaymentIntentId,
+        paymentIntentId: confirmedPaymentIntentId,
+      };
       const response = await ordersApi.createOrder(orderPayload);
+      const orderId = response.data.order?.id;
+
+      // Belt-and-suspenders: confirm payment server-side in case webhook is delayed/missing
+      // This writes stripePayId + sets status PROCESSING without relying on the webhook
+      if (orderId) {
+        try {
+          await paymentApi.confirm(orderId, confirmedPaymentIntentId);
+        } catch (confirmErr) {
+          // Non-fatal — order is already created with stripePayId in payload
+          console.warn('Payment confirm call failed (non-fatal):', confirmErr);
+        }
+      }
+
       clearCart();
       toast.success('Order placed successfully!');
       navigate(`/order-confirmation?orderNumber=${response.data.order.orderNumber}`);

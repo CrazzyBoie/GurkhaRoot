@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { reviewsApi } from '@/services/api';
+import { reviewsApi, productsApi } from '@/services/api';
 
 interface Review {
   id: string;
@@ -48,6 +48,9 @@ export function ProductDetail() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [userHasReviewed, setUserHasReviewed] = useState(false);
 
+  // Live variant stock — refreshed every 30s and on page focus
+  const [liveVariants, setLiveVariants] = useState<any[]>([]);
+
   // Modal — purely driven by image hover, modal itself is pointer-events-none
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalImage, setModalImage] = useState<string>('');
@@ -72,6 +75,29 @@ export function ProductDetail() {
       setQuantity(1);
     }
   }, [currentProduct]);
+
+  // Fetch fresh variant stock from the server
+  const fetchLiveStock = useCallback(async (productId: string) => {
+    try {
+      const res = await productsApi.getProduct(productId);
+      if (res.data?.variants) setLiveVariants(res.data.variants);
+    } catch {
+      // silently ignore — stale data is better than an error
+    }
+  }, []);
+
+  // Poll every 30s + refresh on window focus
+  useEffect(() => {
+    if (!id) return;
+    fetchLiveStock(id);
+    const interval = setInterval(() => fetchLiveStock(id), 30_000);
+    const onFocus = () => fetchLiveStock(id);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [id, fetchLiveStock]);
 
   useEffect(() => {
     if (!currentProduct?.images || currentProduct.images.length <= 1) return;
@@ -184,20 +210,23 @@ export function ProductDetail() {
   }
 
   const product = currentProduct;
-  const uniqueSizes = [...new Set(product.variants.map(v => v.size))];
-  const uniqueColors = product.variants.reduce<{ color: string; hex: string }[]>((acc, v) => {
+  // Use live-refreshed variants when available, fall back to initial product data
+  const variants = liveVariants.length > 0 ? liveVariants : product.variants;
+
+  const uniqueSizes = [...new Set(variants.map((v: any) => v.size))];
+  const uniqueColors = variants.reduce<{ color: string; hex: string }[]>((acc, v: any) => {
     if (!acc.find(c => c.color === v.color)) acc.push({ color: v.color, hex: v.colorHex });
     return acc;
   }, []);
 
   const getAvailableStock = () => {
     if (!selectedSize || !selectedColor) return 0;
-    return product.variants.find(v => v.size === selectedSize && v.color === selectedColor)?.stock || 0;
+    return variants.find((v: any) => v.size === selectedSize && v.color === selectedColor)?.stock || 0;
   };
 
   const getSelectedVariant = () => {
     if (!selectedSize || !selectedColor) return null;
-    return product.variants.find(v => v.size === selectedSize && v.color === selectedColor);
+    return variants.find((v: any) => v.size === selectedSize && v.color === selectedColor);
   };
 
   const handleAddToCart = () => {
@@ -216,13 +245,13 @@ export function ProductDetail() {
 
   const isSizeAvailable = (size: string) =>
     !selectedColor
-      ? product.variants.some(v => v.size === size && v.stock > 0)
-      : product.variants.some(v => v.size === size && v.color === selectedColor && v.stock > 0);
+      ? variants.some((v: any) => v.size === size && v.stock > 0)
+      : variants.some((v: any) => v.size === size && v.color === selectedColor && v.stock > 0);
 
   const isColorAvailable = (color: string) =>
     !selectedSize
-      ? product.variants.some(v => v.color === color && v.stock > 0)
-      : product.variants.some(v => v.color === color && v.size === selectedSize && v.stock > 0);
+      ? variants.some((v: any) => v.color === color && v.stock > 0)
+      : variants.some((v: any) => v.color === color && v.size === selectedSize && v.stock > 0);
 
   const stock = getAvailableStock();
   const formatDate = (d: string) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });

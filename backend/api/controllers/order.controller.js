@@ -28,7 +28,8 @@ const orderSchema = z.object({
   giftNote:       z.string().optional(),
   shippingCost:   z.coerce.number().min(0).optional(),
   shippingMethod: z.string().default('standard'),
-  stripePayId:    z.string().optional(),  // PaymentIntent ID sent by frontend after payment
+  stripePayId:     z.string().optional(),  // PI id confirmed by Stripe (set after payment)
+  paymentIntentId: z.string().optional(),  // same value, stored for webhook fallback lookup
 });
 
 const generateOrderNumber = () => {
@@ -222,6 +223,7 @@ export const createOrder = async (req, res) => {
       giftWrap:       data.giftWrap,
       giftNote:       data.giftNote || null,
       stripePayId:    data.stripePayId || null,
+      paymentIntentId: data.paymentIntentId || null,
       items:          orderItems,
       createdAt:      now,
       updatedAt:      now,
@@ -351,6 +353,37 @@ export const getAllOrders = async (req, res) => {
   }
 };
 
+// -- restoreStock: increments variant stock for each item in a cancelled/returned order --
+const restoreStock = async (db, items = []) => {
+  for (const item of items) {
+    if (!item.variantId && !item.productId) continue;
+    try {
+      // items snapshot stores variantId at order-creation time
+      // Fall back to a product-level search if variantId is missing
+      let vRef = null;
+      if (item.variantId) {
+        vRef = db.collection('variants').doc(item.variantId);
+      } else {
+        // legacy: find variant by productId (best-effort)
+        const vSnap = await db.collection('variants')
+          .where('productId', '==', item.productId).limit(1).get();
+        if (!vSnap.empty) vRef = vSnap.docs[0].ref;
+      }
+      if (!vRef) { console.warn('[restoreStock] No variant ref for item:', item); continue; }
+
+      const vDoc = await vRef.get();
+      if (!vDoc.exists) { console.warn('[restoreStock] Variant not found:', item.variantId); continue; }
+
+      const currentStock = vDoc.data().stock || 0;
+      await vRef.update({ stock: currentStock + (item.quantity || 1) });
+      console.log('[restoreStock] Restored', item.quantity, 'units to variant', vDoc.id,
+        '| stock', currentStock, '->', currentStock + (item.quantity || 1));
+    } catch (err) {
+      console.error('[restoreStock] Failed for item', item.variantId, ':', err.message);
+    }
+  }
+};
+
 // -- updateStatus -------------------------------------------------------------
 export const updateStatus = async (req, res) => {
   try {
@@ -403,6 +436,9 @@ export const updateStatus = async (req, res) => {
               updatedAt:    now,
             });
 
+            // Restore stock for cancelled/returned items
+            await restoreStock(db, orderData.items);
+
             const updated = {
               id, ...orderData, status,
               refundStatus: 'refunded',
@@ -450,6 +486,11 @@ export const updateStatus = async (req, res) => {
 
     const now = new Date().toISOString();
     await snap.ref.update({ status, updatedAt: now });
+
+    // Restore stock when order is cancelled or returned (no-payment path)
+    if (status === 'CANCELLED' || status === 'RETURNED') {
+      await restoreStock(db, orderData.items);
+    }
 
     const updated = { id, ...orderData, status, updatedAt: now };
 
