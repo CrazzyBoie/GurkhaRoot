@@ -30,7 +30,7 @@ const getAllowedStatuses = (currentStatus: string): string[] => {
   // DELIVERED is terminal
   if (currentStatus === 'DELIVERED') return ['DELIVERED'];
   // Otherwise allow current + anything forward
-  return STATUS_ORDER.filter((s, i) => i >= rank);
+  return STATUS_ORDER.filter((_s, i) => i >= rank);
 };
 
 const STATUS_COLORS: Record<string, string> = {
