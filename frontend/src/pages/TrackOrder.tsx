@@ -18,7 +18,7 @@ const STATUS_META: Record<string, { label: string; icon: React.ElementType; colo
 };
 
 export function TrackOrder() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams ] = useSearchParams();
 
   const [orderNumber, setOrderNumber] = useState(searchParams.get('orderNumber') || '');
   const [email, setEmail]             = useState(searchParams.get('email') || '');
