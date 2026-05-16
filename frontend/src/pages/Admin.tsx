@@ -366,15 +366,12 @@ export function Admin() {
       return;
     }
 
-    // Warn admin before cancelling or accepting a return (both trigger auto-refund server-side)
+    // Warn admin before cancelling or accepting a return (backend decides if refund applies)
     const isRefundAction = newStatus === 'CANCELLED' || newStatus === 'RETURNED';
     if (isRefundAction) {
       const order = orders.find(o => o.id === orderId);
-      const hasPayment = order?.stripePayId || order?.paymentIntentId;
-      const actionLabel = newStatus === 'RETURNED' ? 'marking as Returned' : 'cancelling';
-      const msg = hasPayment
-        ? `${actionLabel === 'cancelling' ? 'Cancel' : 'Mark as Returned'} this order ($${order?.total?.toFixed(2)})? The full amount will be automatically refunded to the customer.`
-        : `${actionLabel === 'cancelling' ? 'Cancel' : 'Mark as Returned'} this order? No payment was recorded so no refund will be issued.`;
+      const label = newStatus === 'CANCELLED' ? 'Cancel' : 'Mark as Returned';
+      const msg = `${label} order ${order?.orderNumber} ($${order?.total?.toFixed(2)})?\n\nIf a payment exists it will be automatically refunded to the customer.`;
       if (!window.confirm(msg)) return;
     }
 
