@@ -200,8 +200,11 @@ export function Checkout() {
     const timer = setTimeout(async () => {
       setPostcodeLookupStatus('loading');
       try {
-        // No countrycodes filter — always detect country purely from postcode
-        const url = `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(postcode)}&format=json&addressdetails=1&limit=1`;
+        // If a country is already selected, scope the lookup to that country so
+        // ambiguous postcodes (e.g. 8042 exists in both NZ and CH) resolve correctly.
+        const selectedCountry = shippingAddress.country?.toLowerCase();
+        const countryParam = selectedCountry ? `&countrycodes=${encodeURIComponent(selectedCountry)}` : '';
+        const url = `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(postcode)}${countryParam}&format=json&addressdetails=1&limit=1`;
         const res = await fetch(url, {
           headers: { 'Accept-Language': 'en', 'User-Agent': 'GurkhaRoots-Checkout/1.0' },
         });
@@ -243,7 +246,7 @@ export function Checkout() {
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [shippingAddress.postalCode]);
+  }, [shippingAddress.postalCode, shippingAddress.country]);
 
   // Load saved addresses
   useEffect(() => {
