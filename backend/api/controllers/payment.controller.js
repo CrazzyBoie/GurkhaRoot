@@ -27,6 +27,7 @@ export const createPaymentIntent = async (req, res) => {
 };
 
 // ── NEW: Refund payment when admin cancels order ───────────────────────────
+// ── refundPayment ────────────────────────────────────────────────────────────
 export const refundPayment = async (req, res) => {
   try {
     const { orderId } = req.body;
@@ -40,32 +41,59 @@ export const refundPayment = async (req, res) => {
     }
 
     const orderData = orderDoc.data();
-    const stripePayId = orderData.stripePayId || orderData.paymentIntentId;
+    console.log('🔍 Order data:', JSON.stringify(orderData, null, 2));
 
-    // Check if order was actually paid
+    const stripePayId = orderData.stripePayId || orderData.paymentIntentId;
+    console.log('🔍 stripePayId found:', stripePayId);
+
     if (!stripePayId) {
       return res.status(400).json({ message: 'No payment found for this order' });
     }
 
-    // Check if already refunded
-    if (orderData.refundedAt || orderData.refundStatus === 'refunded') {
+    if (orderData.refundStatus === 'refunded') {
       return res.status(400).json({ message: 'Order has already been refunded' });
     }
 
-    // Create refund in Stripe
+    // ── CRITICAL: Verify the PaymentIntent exists and is refundable ──────────
+    let paymentIntent;
+    try {
+      paymentIntent = await getStripe().paymentIntents.retrieve(stripePayId, {
+        expand: ['charges.data', 'latest_charge']
+      });
+      console.log('🔍 PaymentIntent status:', paymentIntent.status);
+      console.log('🔍 PaymentIntent amount:', paymentIntent.amount);
+      console.log('🔍 Charges count:', paymentIntent.charges?.data?.length);
+    } catch (stripeErr) {
+      console.error('🔴 Stripe retrieve error:', stripeErr.message);
+      return res.status(400).json({ 
+        message: `Stripe error: ${stripeErr.message}. Check if you're using the correct API key (test vs live).` 
+      });
+    }
+
+    // Must be succeeded to refund
+    if (paymentIntent.status !== 'succeeded') {
+      return res.status(400).json({ 
+        message: `Cannot refund: Payment status is "${paymentIntent.status}". Only "succeeded" payments can be refunded.` 
+      });
+    }
+
+    // Create refund
+    console.log('🔍 Creating refund for payment_intent:', stripePayId);
     const refund = await getStripe().refunds.create({
       payment_intent: stripePayId,
-      reason: 'requested_by_customer', // or 'duplicate', 'fraudulent'
+      reason: 'requested_by_customer',
     });
 
-    // Update order in Firebase
+    console.log('✅ Refund created:', refund.id, 'Status:', refund.status);
+
+    // Update order
     await orderDoc.ref.update({
-      status: 'CANCELLED',
+      status:       'CANCELLED',
       refundStatus: 'refunded',
-      refundId: refund.id,
-      refundAmount: refund.amount / 100, // convert cents to dollars
-      refundedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      refundId:     refund.id,
+      refundAmount: refund.amount / 100,
+      refundedAt:   new Date().toISOString(),
+      updatedAt:    new Date().toISOString(),
     });
 
     res.json({ 
@@ -73,9 +101,11 @@ export const refundPayment = async (req, res) => {
       message: 'Payment refunded successfully',
       refundId: refund.id,
       refundAmount: refund.amount / 100,
+      stripeStatus: refund.status
     });
   } catch (error) {
-    console.error('Refund error:', error.message);
+    console.error('🔴 Refund error:', error.message);
+    console.error('🔴 Full error:', error);
     res.status(500).json({ message: error.message || 'Failed to process refund' });
   }
 };
