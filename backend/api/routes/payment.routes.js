@@ -14,7 +14,7 @@ router.post('/create-intent', optionalAuth, createPaymentIntent);
 router.get('/status/:paymentIntentId', optionalAuth, getPaymentStatus);
 
 // ── NEW: Refund route — admin/super_admin only ─────────────────────────────
-router.post('/refund', authenticate, requireRole(['super_admin', 'inventory_manager']), refundPayment);
+router.post('/refund', authenticate, requireRole('super_admin', 'inventory_manager'), refundPayment);
 
 // Webhook must use raw body — registered before express.json() in index.js
 router.post('/webhook', express.raw({ type: 'application/json' }), webhook);

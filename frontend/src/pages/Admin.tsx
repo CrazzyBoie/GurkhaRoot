@@ -17,7 +17,7 @@ import { useAuthStore } from '../stores';
 import { toast } from 'sonner';
 
 // ── Order status progression (forward-only) ────────────────────────────────
-const STATUS_ORDER = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+const STATUS_ORDER = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'];
 
 const getStatusRank = (status: string) => STATUS_ORDER.indexOf(status);
 
@@ -25,12 +25,14 @@ const getStatusRank = (status: string) => STATUS_ORDER.indexOf(status);
 const getAllowedStatuses = (currentStatus: string): string[] => {
   const rank = getStatusRank(currentStatus);
   if (rank === -1) return STATUS_ORDER;
-  // CANCELLED is always terminal — no changes once cancelled
+  // CANCELLED is always terminal
   if (currentStatus === 'CANCELLED') return ['CANCELLED'];
-  // DELIVERED is terminal
-  if (currentStatus === 'DELIVERED') return ['DELIVERED'];
-  // Otherwise allow current + anything forward
-  return STATUS_ORDER.filter((_s, i) => i >= rank);
+  // RETURNED is always terminal (refund already issued)
+  if (currentStatus === 'RETURNED') return ['RETURNED'];
+  // DELIVERED can move to RETURNED (customer return + auto-refund)
+  if (currentStatus === 'DELIVERED') return ['DELIVERED', 'RETURNED'];
+  // Otherwise allow current + anything forward (RETURNED only accessible from DELIVERED)
+  return STATUS_ORDER.filter((_s, i) => i >= rank && _s !== 'RETURNED');
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -39,6 +41,7 @@ const STATUS_COLORS: Record<string, string> = {
   SHIPPED: 'bg-purple-100 text-purple-800',
   DELIVERED: 'bg-green-100 text-green-800',
   CANCELLED: 'bg-red-100 text-red-800',
+  RETURNED: 'bg-orange-100 text-orange-800',
 };
 
 const ROLE_STYLES: Record<string, string> = {
@@ -359,55 +362,35 @@ export function Admin() {
 
     const allowed = getAllowedStatuses(currentStatus);
     if (!allowed.includes(newStatus)) {
-      toast.error(`Cannot move order back from ${currentStatus} to ${newStatus}`);
+      toast.error('Cannot move order from ' + currentStatus + ' to ' + newStatus);
       return;
     }
 
-    // ── REFUND LOGIC: If cancelling a paid order ──────────────────────────────
-    if (newStatus === 'CANCELLED' && currentStatus !== 'CANCELLED') {
+    // Warn admin before cancelling or accepting a return (both trigger auto-refund server-side)
+    const isRefundAction = newStatus === 'CANCELLED' || newStatus === 'RETURNED';
+    if (isRefundAction) {
       const order = orders.find(o => o.id === orderId);
-
-      // Check if order was paid (has stripePayId or paymentIntentId)
-      if (order?.stripePayId || order?.paymentIntentId) {
-        const confirmRefund = window.confirm(
-          `This order has been paid ($${order.total?.toFixed(2)}). ` +
-          `Cancelling will automatically refund the full amount to the customer.\n\nProceed?`
-        );
-
-        if (!confirmRefund) return;
-
-        try {
-          const token = localStorage.getItem('token');
-          const res = await fetch('/api/payments/refund', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token && { 'Authorization': `Bearer ${token}` })
-            },
-            body: JSON.stringify({ orderId }),
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            toast.error(data.message || 'Refund failed');
-            return;
-          }
-
-          toast.success(`Refunded $${data.refundAmount?.toFixed(2)} to customer`);
-        } catch (err) {
-          toast.error('Refund request failed');
-          return;
-        }
-      }
+      const hasPayment = order?.stripePayId || order?.paymentIntentId;
+      const actionLabel = newStatus === 'RETURNED' ? 'marking as Returned' : 'cancelling';
+      const msg = hasPayment
+        ? `${actionLabel === 'cancelling' ? 'Cancel' : 'Mark as Returned'} this order ($${order?.total?.toFixed(2)})? The full amount will be automatically refunded to the customer.`
+        : `${actionLabel === 'cancelling' ? 'Cancel' : 'Mark as Returned'} this order? No payment was recorded so no refund will be issued.`;
+      if (!window.confirm(msg)) return;
     }
 
     try {
-      await ordersApi.updateStatus(orderId, newStatus);
-      toast.success('Order status updated');
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-    } catch {
-      toast.error('Failed to update order status');
+      const res = await ordersApi.updateStatus(orderId, newStatus);
+      const data = res.data;
+
+      if (data.refunded) {
+        toast.success('Order ' + newStatus.toLowerCase() + ' — $' + data.refundAmount?.toFixed(2) + ' refunded to customer');
+      } else {
+        toast.success('Order status updated to ' + newStatus);
+      }
+
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...data.order } : o));
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update order status');
     }
   };
   
@@ -1095,7 +1078,7 @@ export function Admin() {
               <Input placeholder="Search by order # or customer..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadOrders()} className="max-w-xs" />
               <select value={orderStatus} onChange={e => { setOrderStatus(e.target.value); setOrderPage(1); }} className="border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm">
                 <option value="">All Statuses</option>
-                {['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'].map(s => <option key={s} value={s}>{s}</option>)}
+                {['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <Button variant="outline" onClick={loadOrders}>Search</Button>
               <Button variant="outline" onClick={exportOrders} className="text-blue-200 border-white/20 hover:bg-white/10 ml-auto"><Download className="w-3 h-3 mr-1" />Export CSV</Button>
@@ -1118,7 +1101,7 @@ export function Admin() {
                     <tbody className="divide-y divide-white/10">
                       {orders.map(order => {
                         const allowed = getAllowedStatuses(order.status);
-                        const isTerminal = order.status === 'DELIVERED' || order.status === 'CANCELLED';
+                        const isTerminal = order.status === 'CANCELLED' || order.status === 'RETURNED';
                         return (
                           <tr key={order.id} className="hover:bg-white/5">
                             <td className="py-3 px-4 font-medium">{order.orderNumber}</td>

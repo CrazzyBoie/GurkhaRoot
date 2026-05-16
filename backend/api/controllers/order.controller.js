@@ -350,12 +350,13 @@ export const getAllOrders = async (req, res) => {
   }
 };
 
-// ── updateStatus ──────────────────────────────────────────────────────────────
+// -- updateStatus -------------------------------------------------------------
 export const updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const validStatuses = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED'];
+    // RETURNED = post-delivery customer return, also triggers auto-refund
+    const validStatuses = ['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED', 'RETURNED'];
     if (!validStatuses.includes(status))
       return res.status(400).json({ message: 'Invalid status' });
 
@@ -364,12 +365,94 @@ export const updateStatus = async (req, res) => {
     if (!snap.exists) return res.status(404).json({ message: 'Order not found' });
 
     const orderData = snap.data();
+    console.log('[updateStatus] order=' + id + ' | ' + orderData.status + ' -> ' + status);
+
+    // -- Auto-refund on CANCELLED or RETURNED ---------------------------------
+    const needsRefund = (status === 'CANCELLED' || status === 'RETURNED')
+      && orderData.refundStatus !== 'refunded';
+
+    if (needsRefund) {
+      const stripePayId = orderData.stripePayId || orderData.paymentIntentId;
+      console.log('[updateStatus] Refund check -- stripePayId:', stripePayId || 'NONE');
+
+      if (stripePayId) {
+        try {
+          const { default: Stripe } = await import('stripe');
+          const key = process.env.STRIPE_SECRET_KEY;
+          if (!key || key.includes('your_stripe')) throw new Error('STRIPE_SECRET_KEY not configured');
+          const stripe = new Stripe(key);
+
+          const pi = await stripe.paymentIntents.retrieve(stripePayId);
+          console.log('[updateStatus] PaymentIntent status:', pi.status);
+
+          if (pi.status === 'succeeded') {
+            const refund = await stripe.refunds.create({
+              payment_intent: stripePayId,
+              reason: 'requested_by_customer',
+            });
+            console.log('[updateStatus] Refund created:', refund.id, 'status:', refund.status);
+
+            const now = new Date().toISOString();
+            await snap.ref.update({
+              status,
+              refundStatus: 'refunded',
+              refundId:     refund.id,
+              refundAmount: refund.amount / 100,
+              refundedAt:   now,
+              updatedAt:    now,
+            });
+
+            const updated = {
+              id, ...orderData, status,
+              refundStatus: 'refunded',
+              refundId: refund.id,
+              refundAmount: refund.amount / 100,
+              updatedAt: now,
+            };
+
+            // Send status update email
+            let emailUser = null;
+            if (orderData.userId) {
+              const uSnap = await db.collection('users').doc(orderData.userId).get();
+              if (uSnap.exists && uSnap.data().email)
+                emailUser = { name: uSnap.data().name || orderData.shippingSnap?.fullName || 'Valued Customer', email: uSnap.data().email };
+            }
+            if (!emailUser?.email && orderData.guestEmail)
+              emailUser = { name: orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer', email: orderData.guestEmail };
+
+            if (emailUser?.email) {
+              try {
+                const result = await sendOrderStatusUpdate(updated, emailUser);
+                if (!result.success) console.error('[updateStatus] Status email failed:', result.error);
+                else console.log('[updateStatus] Status email sent to:', emailUser.email, '| Status:', status);
+              } catch (err) { console.error('[updateStatus] Status email error:', err); }
+            }
+
+            return res.json({
+              message: 'Order status updated',
+              order: updated,
+              refunded: true,
+              refundId: refund.id,
+              refundAmount: refund.amount / 100,
+            });
+          } else {
+            console.warn('[updateStatus] Skipping refund -- PaymentIntent is "' + pi.status + '", not "succeeded"');
+          }
+        } catch (refundErr) {
+          console.error('[updateStatus] Auto-refund error:', refundErr.message);
+          // Don't block the status update -- fall through without refund
+        }
+      } else {
+        console.log('[updateStatus] No stripePayId on order ' + id + ' -- skipping refund');
+      }
+    }
+
     const now = new Date().toISOString();
     await snap.ref.update({ status, updatedAt: now });
 
     const updated = { id, ...orderData, status, updatedAt: now };
 
-    // ── Resolve email recipient ───────────────────────────────────────────────
+    // -- Resolve email recipient ----------------------------------------------
     let emailUser = null;
 
     if (orderData.userId) {
@@ -379,9 +462,9 @@ export const updateStatus = async (req, res) => {
           name:  uSnap.data().name || orderData.shippingSnap?.fullName || 'Valued Customer',
           email: uSnap.data().email,
         };
-        console.log('✅ Found registered user for status email:', emailUser.email);
+        console.log('[updateStatus] Found registered user for status email:', emailUser.email);
       } else {
-        console.warn('⚠️ User doc missing or no email for userId:', orderData.userId);
+        console.warn('[updateStatus] User doc missing or no email for userId:', orderData.userId);
       }
     }
 
@@ -390,27 +473,27 @@ export const updateStatus = async (req, res) => {
         name:  orderData.guestName || orderData.shippingSnap?.fullName || 'Valued Customer',
         email: orderData.guestEmail,
       };
-      console.log('✅ Using guest email for status update:', emailUser.email);
+      console.log('[updateStatus] Using guest email for status update:', emailUser.email);
     }
 
     if (!emailUser?.email) {
-      console.error(`❌ No email found for order ${updated.orderNumber} (ID: ${id})`);
+      console.error('[updateStatus] No email found for order ' + updated.orderNumber + ' (ID: ' + id + ')');
     }
 
-    // ── Send status email — awaited so Vercel doesn't kill it early ───────────
+    // -- Send status email ----------------------------------------------------
     if (emailUser?.email) {
       try {
         const result = await sendOrderStatusUpdate(updated, emailUser);
-        if (!result.success) console.error('❌ Status email failed:', result.error);
-        else console.log('✅ Status update email sent to:', emailUser.email, '| Status:', status);
+        if (!result.success) console.error('[updateStatus] Status email failed:', result.error);
+        else console.log('[updateStatus] Status email sent to:', emailUser.email, '| Status:', status);
       } catch (err) {
-        console.error('❌ Status email error:', err);
+        console.error('[updateStatus] Status email error:', err);
       }
     }
 
     res.json({ message: 'Order status updated', order: updated });
   } catch (error) {
-    console.error('❌ Update status error:', error);
+    console.error('[updateStatus] Error:', error);
     res.status(500).json({ message: 'Failed to update status' });
   }
 };

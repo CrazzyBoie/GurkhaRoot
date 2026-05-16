@@ -142,6 +142,8 @@ export const paymentApi = {
     api.post('/payments/create-intent', { amount, orderId }),
   getStatus: (paymentIntentId: string) =>
     api.get(`/payments/status/${paymentIntentId}`),
+  refund: (orderId: string) =>
+    api.post('/payments/refund', { orderId }),
 };
 
 export const reviewsApi = {
