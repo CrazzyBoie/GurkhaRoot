@@ -1,5 +1,41 @@
 import { z } from 'zod';
 import { getDb, newId, snapToArr, docToObj } from '../lib/firebase.js';
+import { v2 as cloudinary } from 'cloudinary';
+
+// Configure Cloudinary once (reads from env vars automatically if set,
+// but we set them explicitly to be safe)
+cloudinary.config({
+  cloud_name:  process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:     process.env.CLOUDINARY_API_KEY,
+  api_secret:  process.env.CLOUDINARY_API_SECRET,
+});
+
+// ── Extract Cloudinary public_id from a secure_url ────────────────────────────
+// e.g. https://res.cloudinary.com/dyjaubiz7/image/upload/v1234/gurkha-roots/products/abc123.jpg
+// → "gurkha-roots/products/abc123"
+const getPublicId = (url) => {
+  try {
+    const parts = url.split('/upload/');
+    if (parts.length < 2) return null;
+    // Strip version segment (v1234567/) if present
+    const withoutVersion = parts[1].replace(/^v\d+\//, '');
+    // Strip file extension
+    return withoutVersion.replace(/\.[^/.]+$/, '');
+  } catch {
+    return null;
+  }
+};
+
+// Delete an array of Cloudinary image URLs — fire-and-forget safe
+const deleteCloudinaryImages = async (urls = []) => {
+  const publicIds = urls.map(getPublicId).filter(Boolean);
+  if (!publicIds.length) return;
+  try {
+    await Promise.all(publicIds.map(id => cloudinary.uploader.destroy(id)));
+  } catch (err) {
+    console.error('Cloudinary delete error:', err);
+  }
+};
 
 const productSchema = z.object({
   name:        z.string().min(1),
@@ -207,7 +243,15 @@ export const updateProduct = async (req, res) => {
     // Images arrive as a pre-built array of Cloudinary URLs from the frontend
     // (kept existing URLs + any newly uploaded URLs, already merged client-side)
     if (Array.isArray(body.images)) {
+      // Find images that were removed so we can delete them from Cloudinary
+      const previousImages = snap.data().images || [];
+      const removedImages  = previousImages.filter(url => !body.images.includes(url));
       updateData.images = body.images;
+      // Delete removed images from Cloudinary after we confirm the update succeeds
+      if (removedImages.length > 0) {
+        // We'll delete after the Firestore write so we don't orphan on DB failure
+        updateData._removedImages = removedImages;
+      }
     }
     delete updateData.variants;
 
@@ -236,7 +280,13 @@ export const updateProduct = async (req, res) => {
     }
 
     const varSnap = await db.collection('variants').where('productId', '==', id).get();
+    const removedImages = updateData._removedImages || [];
+    delete updateData._removedImages;
     const product = { id, ...snap.data(), ...updateData, variants: snapToArr(varSnap) };
+
+    // Delete removed images from Cloudinary now that Firestore update succeeded
+    await deleteCloudinaryImages(removedImages);
+
     res.json({ message: 'Product updated successfully', product });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ message: error.errors[0].message });
@@ -253,12 +303,17 @@ export const deleteProduct = async (req, res) => {
     const snap   = await db.collection('products').doc(id).get();
     if (!snap.exists) return res.status(404).json({ message: 'Product not found' });
 
-    // Delete variants
+    const productData = snap.data();
+
+    // Delete variants + product doc from Firestore
     const varSnap = await db.collection('variants').where('productId', '==', id).get();
     const batch   = db.batch();
     varSnap.forEach(d => batch.delete(d.ref));
     batch.delete(snap.ref);
     await batch.commit();
+
+    // Delete all associated images from Cloudinary (after Firestore succeeds)
+    await deleteCloudinaryImages(productData.images || []);
 
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
