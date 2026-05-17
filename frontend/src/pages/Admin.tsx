@@ -114,6 +114,8 @@ export function Admin() {
   const [editingDamaged, setEditingDamaged] = useState<any>(null);
   const [damagedQtyInput, setDamagedQtyInput] = useState('');
   const [savingDamaged, setSavingDamaged] = useState(false);
+  const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [productVariantStock, setProductVariantStock] = useState<Record<string, any[]>>({});
 
   // ── Orders ─────────────────────────────────────────────────────────────────
   const [orders, setOrders] = useState<any[]>([]);
@@ -250,11 +252,36 @@ export function Admin() {
       await adminApi.updateDamagedStock(editingDamaged.id, qty);
       toast.success('Damaged stock updated — shop stock adjusted automatically');
       setEditingDamaged(null);
-      loadStockOverview();
+      // Refresh whichever view is open
+      if (productSubTab === 'stock') loadStockOverview();
+      if (expandedProductId) {
+        // Refresh the expanded product's variant list
+        const res = await adminApi.getStockOverview();
+        const updated = res.data.variants.filter((v: any) => v.productId === expandedProductId);
+        setProductVariantStock(prev => ({ ...prev, [expandedProductId]: updated }));
+      }
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to update damaged stock');
     } finally {
       setSavingDamaged(false);
+    }
+  };
+
+  const toggleProductDamagePanel = async (product: any) => {
+    if (expandedProductId === product.id) {
+      setExpandedProductId(null);
+      return;
+    }
+    setExpandedProductId(product.id);
+    // Load variants for this product from stock overview if not already loaded
+    if (!productVariantStock[product.id]) {
+      try {
+        const res = await adminApi.getStockOverview();
+        const variants = res.data.variants.filter((v: any) => v.productId === product.id);
+        setProductVariantStock(prev => ({ ...prev, [product.id]: variants }));
+      } catch {
+        toast.error('Failed to load variants');
+      }
     }
   };
 
@@ -1073,46 +1100,7 @@ export function Admin() {
                   </Card>
                 )}
 
-                {/* Damaged Stock modal */}
-                {editingDamaged && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditingDamaged(null)} />
-                    <div className="relative bg-[#0f172a] rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
-                      <div className="flex items-center justify-between p-6 border-b border-slate-700">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-orange-900 flex items-center justify-center"><AlertTriangle className="w-5 h-5 text-orange-400" /></div>
-                          <div>
-                            <h3 className="text-base font-semibold text-white">Log Damaged Stock</h3>
-                            <p className="text-xs text-slate-400">{editingDamaged.productName} — {editingDamaged.size} / {editingDamaged.color}</p>
-                          </div>
-                        </div>
-                        <button onClick={() => setEditingDamaged(null)} className="p-1.5 rounded-lg hover:bg-slate-700 transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
-                      </div>
-                      <div className="p-6 space-y-4">
-                        <div className="grid grid-cols-3 gap-3 text-center">
-                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Available</p><p className="text-lg font-bold text-green-400">{editingDamaged.stock}</p></div>
-                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Sold</p><p className="text-lg font-bold text-blue-400">{editingDamaged.soldQty}</p></div>
-                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Damaged</p><p className="text-lg font-bold text-orange-400">{editingDamaged.damagedStock}</p></div>
-                        </div>
-                        <div>
-                          <Label className="text-slate-300">Total Damaged Units</Label>
-                          <Input
-                            type="number" min="0"
-                            value={damagedQtyInput}
-                            onChange={e => setDamagedQtyInput(e.target.value)}
-                            className="mt-1 bg-slate-800 border-slate-600 text-white"
-                            placeholder="Enter total damaged units"
-                          />
-                          <p className="text-xs text-slate-500 mt-1.5">Set the <strong className="text-slate-300">total</strong> number of damaged units for this variant. The difference from the current value will be automatically deducted from shop-visible stock.</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-3 p-6 border-t border-slate-700">
-                        <Button onClick={handleSaveDamaged} disabled={savingDamaged} className="flex-1 bg-orange-600 hover:bg-orange-700 text-white">{savingDamaged ? 'Saving...' : 'Update Damaged Stock'}</Button>
-                        <Button variant="outline" onClick={() => setEditingDamaged(null)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Damaged Stock modal moved to outer scope — see below */}
               </div>
             )}
 
@@ -1264,7 +1252,8 @@ export function Admin() {
                     </thead>
                     <tbody className="divide-y divide-white/10">
                       {products.map(product => (
-                        <tr key={product.id} className="hover:bg-white/5">
+                        <>
+                        <tr key={product.id} className={`hover:bg-white/5 ${expandedProductId === product.id ? 'bg-white/5' : ''}`}>
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-3">
                               <img src={product.images?.[0] || '/placeholder.jpg'} alt={product.name} className="w-10 h-10 object-cover rounded" onError={e => { (e.target as HTMLImageElement).src = '/placeholder.jpg'; }} />
@@ -1282,11 +1271,65 @@ export function Admin() {
                           </td>
                           <td className="py-3 px-4 text-right">
                             <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline" size="sm"
+                                onClick={() => toggleProductDamagePanel(product)}
+                                className={`text-xs ${expandedProductId === product.id ? 'bg-orange-500/20 text-orange-400 border-orange-400/40' : 'text-orange-400 border-orange-400/30 hover:bg-orange-400/10'}`}
+                                title="Mark damaged stock"
+                              >
+                                ⚠ Damage
+                              </Button>
                               <Button variant="outline" size="sm" onClick={() => openProductForm(product)}><Edit2 className="w-3 h-3" /></Button>
                               <Button variant="outline" size="sm" className="text-red-500 border-red-200 hover:bg-red-50" onClick={() => handleDeleteProduct(product.id, product.name)}><Trash2 className="w-3 h-3" /></Button>
                             </div>
                           </td>
                         </tr>
+                        {/* ── Inline damage panel ── */}
+                        {expandedProductId === product.id && (
+                          <tr key={`${product.id}-damage`}>
+                            <td colSpan={6} className="px-4 pb-4 pt-0 bg-orange-950/20 border-t border-orange-400/20">
+                              <div className="py-3">
+                                <p className="text-xs font-semibold text-orange-400 mb-3 flex items-center gap-1.5">
+                                  <AlertTriangle className="w-3.5 h-3.5" /> Mark Damaged Stock — {product.name}
+                                  <span className="text-orange-300/60 font-normal ml-1">Set total damaged units per variant. Deducted from shop stock automatically.</span>
+                                </p>
+                                {!productVariantStock[product.id] ? (
+                                  <div className="flex items-center gap-2 text-xs text-blue-300/60"><div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />Loading variants…</div>
+                                ) : productVariantStock[product.id].length === 0 ? (
+                                  <p className="text-xs text-blue-300/50">No variants found for this product.</p>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                    {productVariantStock[product.id].map((v: any) => (
+                                      <div key={v.id} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 gap-3">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <span className="w-3 h-3 rounded-full border border-white/20 flex-shrink-0" style={{ background: v.colorHex || '#888' }} />
+                                          <div className="min-w-0">
+                                            <p className="text-xs font-medium text-white truncate">{v.size} / {v.color}</p>
+                                            <p className="text-xs text-blue-300/60">
+                                              <span className="text-green-400">{v.stock} avail</span>
+                                              {' · '}
+                                              <span className="text-orange-400">{v.damagedStock} dmg</span>
+                                              {' · '}
+                                              <span className="text-blue-400">{v.soldQty} sold</span>
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <Button
+                                          size="sm"
+                                          onClick={() => { openDamagedEditor(v); }}
+                                          className="bg-orange-600/80 hover:bg-orange-600 text-white text-xs px-2 py-1 h-auto flex-shrink-0"
+                                        >
+                                          Log
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </>
                       ))}
                     </tbody>
                   </table>
@@ -1301,6 +1344,49 @@ export function Admin() {
               </CardContent>
             </Card>
             </>) } {/* end productSubTab === 'list' */}
+
+            {/* ── Damaged Stock modal — shared between both sub-tabs ── */}
+            {editingDamaged && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditingDamaged(null)} />
+                <div className="relative bg-[#0f172a] rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
+                  <div className="flex items-center justify-between p-6 border-b border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-orange-900 flex items-center justify-center"><AlertTriangle className="w-5 h-5 text-orange-400" /></div>
+                      <div>
+                        <h3 className="text-base font-semibold text-white">Log Damaged Stock</h3>
+                        <p className="text-xs text-slate-400">{editingDamaged.productName} — {editingDamaged.size} / {editingDamaged.color}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setEditingDamaged(null)} className="p-1.5 rounded-lg hover:bg-slate-700 transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Available</p><p className="text-lg font-bold text-green-400">{editingDamaged.stock}</p></div>
+                      <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Sold</p><p className="text-lg font-bold text-blue-400">{editingDamaged.soldQty ?? 0}</p></div>
+                      <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Damaged</p><p className="text-lg font-bold text-orange-400">{editingDamaged.damagedStock}</p></div>
+                    </div>
+                    <div>
+                      <Label className="text-slate-300">Total Damaged Units</Label>
+                      <Input
+                        type="number" min="0"
+                        value={damagedQtyInput}
+                        onChange={e => setDamagedQtyInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSaveDamaged()}
+                        className="mt-1 bg-slate-800 border-slate-600 text-white"
+                        placeholder="Enter total damaged units"
+                        autoFocus
+                      />
+                      <p className="text-xs text-slate-500 mt-1.5">Set the <strong className="text-slate-300">total</strong> damaged units for this variant. The difference from the current value is automatically deducted from shop-visible stock.</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 p-6 border-t border-slate-700">
+                    <Button onClick={handleSaveDamaged} disabled={savingDamaged} className="flex-1 bg-orange-600 hover:bg-orange-700 text-white">{savingDamaged ? 'Saving...' : 'Update Damaged Stock'}</Button>
+                    <Button variant="outline" onClick={() => setEditingDamaged(null)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
