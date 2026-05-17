@@ -8,25 +8,8 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  try {
-    const keys = ['auth-storage', 'auth_store', 'user', 'token'];
-    let token = null;
-    for (const key of keys) {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          token = parsed?.state?.token || parsed?.token || parsed;
-          if (typeof token === 'string' && token.startsWith('eyJ')) break;
-        } catch {
-          if (raw.startsWith('eyJ')) { token = raw; break; }
-        }
-      }
-    }
-    if (token && !config.headers['Authorization']) {
-      config.headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch {}
+  // Auth is handled by httpOnly cookies via withCredentials: true.
+  // No manual token injection needed.
   return config;
 });
 
@@ -45,18 +28,6 @@ api.interceptors.response.use(
           await axios.post(`${API_URL}/auth/refresh`, {}, { withCredentials: true });
           return api(originalRequest);
         } catch (refreshError) {
-          try {
-            const raw = localStorage.getItem('auth-storage');
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (parsed?.state) {
-                parsed.state.token = null;
-                parsed.state.user = null;
-                parsed.state.isAuthenticated = false;
-                localStorage.setItem('auth-storage', JSON.stringify(parsed));
-              }
-            }
-          } catch {}
           window.location.href = '/login';
           return Promise.reject(refreshError);
         }
