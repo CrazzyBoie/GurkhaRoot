@@ -203,7 +203,14 @@ export const updateProduct = async (req, res) => {
 
     const newImages  = req.imageUrls;
     const updateData = { ...data };
-    if (newImages?.length) {
+
+    // Build final images array: kept existing images + any newly uploaded images
+    if (req.body.keptImages !== undefined) {
+      let keptImages = [];
+      try { keptImages = JSON.parse(req.body.keptImages); } catch { keptImages = []; }
+      updateData.images = [...keptImages, ...(newImages || [])];
+    } else if (newImages?.length) {
+      // Legacy: no keptImages sent — only update images if new files were uploaded
       updateData.images = newImages;
     }
     delete updateData.variants;

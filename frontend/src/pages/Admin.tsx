@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   BarChart2, Package, ShoppingBag, Users, Tag, AlertTriangle,
   Plus, Trash2, Edit2, X, Upload, Search, UserCog, Shield, ShieldCheck, KeyRound, Eye, EyeOff,
-  Truck, Globe, Zap, Clock, Check, Pencil, Download, Copy, CalendarRange, UserPlus, Lock,
+  Truck, Globe, Zap, Clock, Check, Pencil, Download, CalendarRange, UserPlus, Lock,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -94,16 +94,15 @@ export function Admin() {
   });
   const [imageFiles, setImageFiles] = useState<FileList | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
-  const [showBulkProductForm, setShowBulkProductForm] = useState(false);
-  const [bulkProductCount, setBulkProductCount] = useState(5);
-  const [bulkBaseForm, setBulkBaseForm] = useState({
-    name: '', description: '', category: '', price: '', material: '',
-    featured: false, newArrival: false,
-    variants: [{ size: '', color: '', colorHex: '#000000', stock: '' }],
-  });
-  const [bulkImageFiles, setBulkImageFiles] = useState<FileList | null>(null);
-  const [savingBulk, setSavingBulk] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // existing images management (edit mode)
+  const [existingImages, setExistingImages] = useState<string[]>([]);
+  const [deletedImages, setDeletedImages] = useState<string[]>([]);
+  // stock mode: 'bulk' sets same stock to all variants, 'individual' per-variant
+  const [stockMode, setStockMode] = useState<'bulk' | 'individual'>('individual');
+  const [bulkStock, setBulkStock] = useState('');
+  // color picker open index
+  const [colorPickerOpen, setColorPickerOpen] = useState<number | null>(null);
+
 
   // ── Stock Management ──────────────────────────────────────────────────────
   const [productSubTab, setProductSubTab] = useState<'list' | 'stock'>('list');
@@ -372,11 +371,17 @@ export function Admin() {
           ? product.variants.map((v: any) => ({ size: v.size, color: v.color, colorHex: v.colorHex, stock: String(v.stock) }))
           : [{ size: '', color: '', colorHex: '#000000', stock: '' }],
       });
+      setExistingImages(product.images || []);
     } else {
       setEditingProduct(null);
       setProductForm({ name: '', description: '', category: '', price: '', material: '', featured: false, newArrival: false, variants: [{ size: '', color: '', colorHex: '#000000', stock: '' }] });
+      setExistingImages([]);
     }
+    setDeletedImages([]);
     setImageFiles(null);
+    setStockMode('individual');
+    setBulkStock('');
+    setColorPickerOpen(null);
     setShowProductForm(true);
   };
 
@@ -391,8 +396,23 @@ export function Admin() {
       formData.append('material', productForm.material);
       formData.append('featured', String(productForm.featured));
       formData.append('newArrival', String(productForm.newArrival));
-      formData.append('variants', JSON.stringify(productForm.variants.map(v => ({ ...v, stock: parseInt(v.stock) || 0 }))));
+
+      // Apply bulk stock if in bulk mode
+      const finalVariants = productForm.variants.map(v => ({
+        ...v,
+        stock: stockMode === 'bulk' ? (parseInt(bulkStock) || 0) : (parseInt(v.stock) || 0),
+      }));
+      formData.append('variants', JSON.stringify(finalVariants));
+
+      // In edit mode: pass the images we want to KEEP (existing minus deleted)
+      if (editingProduct) {
+        const keptImages = existingImages.filter(img => !deletedImages.includes(img));
+        formData.append('keptImages', JSON.stringify(keptImages));
+      }
+
+      // New image files (appended on top of kept images on the server)
       if (imageFiles) Array.from(imageFiles).forEach(file => formData.append('images', file));
+
       if (editingProduct) {
         await productsApi.updateProduct(editingProduct.id, formData);
         toast.success('Product updated');
@@ -686,40 +706,7 @@ export function Admin() {
     } finally { setSavingMethod(false); }
   };
 
-  // ── Bulk Product Entry ─────────────────────────────────────────────────────
-  const handleSaveBulkProducts = async () => {
-    if (!bulkBaseForm.name.trim() || !bulkBaseForm.price) { toast.error('Name and price are required'); return; }
-    setSavingBulk(true);
-    setBulkProgress({ done: 0, total: bulkProductCount });
-    let successCount = 0;
-    for (let i = 0; i < bulkProductCount; i++) {
-      try {
-        const formData = new FormData();
-        formData.append('name', bulkProductCount === 1 ? bulkBaseForm.name : `${bulkBaseForm.name} #${i + 1}`);
-        formData.append('description', bulkBaseForm.description);
-        formData.append('category', bulkBaseForm.category);
-        formData.append('price', bulkBaseForm.price);
-        formData.append('material', bulkBaseForm.material);
-        formData.append('featured', String(bulkBaseForm.featured));
-        formData.append('newArrival', String(bulkBaseForm.newArrival));
-        formData.append('variants', JSON.stringify(bulkBaseForm.variants.map(v => ({ ...v, stock: parseInt(v.stock) || 0 }))));
-        if (bulkImageFiles) Array.from(bulkImageFiles).forEach(file => formData.append('images', file));
-        await productsApi.createProduct(formData);
-        successCount++;
-        setBulkProgress({ done: i + 1, total: bulkProductCount });
-      } catch { toast.error(`Failed to create product ${i + 1}`); }
-    }
-    setSavingBulk(false);
-    setBulkProgress(null);
-    if (successCount > 0) {
-      toast.success(`${successCount} product(s) created`);
-      setShowBulkProductForm(false);
-      setBulkBaseForm({ name: '', description: '', category: '', price: '', material: '', featured: false, newArrival: false, variants: [{ size: '', color: '', colorHex: '#000000', stock: '' }] });
-      setBulkImageFiles(null);
-      setBulkProductCount(5);
-      loadProducts();
-    }
-  };
+
 
   // ── Create New User ────────────────────────────────────────────────────────
   const openCreateUserModal = () => {
@@ -1114,126 +1101,261 @@ export function Admin() {
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={exportProducts} className="text-blue-200 border-white/20 hover:bg-white/10"><Download className="w-3 h-3 mr-1" />Export CSV</Button>
-                <Button onClick={() => setShowBulkProductForm(v => !v)} variant="outline" className="border-[#DC143C]/40 text-[#DC143C] hover:bg-[#DC143C]/10"><Copy className="w-4 h-4 mr-2" /> Bulk Add</Button>
                 <Button onClick={() => openProductForm()} className="bg-[#1a1a1a] text-white"><Plus className="w-4 h-4 mr-2" /> Add Product</Button>
               </div>
             </div>
 
-            {showBulkProductForm && (
-              <Card className="flag-card border-0 shadow-sm border-l-4 border-l-[#DC143C]">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
+
+
+
+            {/* ── Product Modal ── */}
+            {showProductForm && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowProductForm(false)} />
+                <div className="relative bg-[#0f172a] rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-700 flex flex-col max-h-[90vh]">
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
                     <div>
-                      <h3 className="font-semibold text-white flex items-center gap-2"><Copy className="w-4 h-4 text-[#DC143C]" />Bulk Product Entry</h3>
-                      <p className="text-xs text-blue-300/70 mt-0.5">Create multiple products with the same info and variants. Names will be auto-numbered.</p>
+                      <h3 className="text-lg font-semibold text-white">{editingProduct ? 'Edit Product' : 'New Product'}</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">{editingProduct ? `Editing: ${editingProduct.name}` : 'Fill in the details below'}</p>
                     </div>
-                    <button onClick={() => setShowBulkProductForm(false)}><X className="w-4 h-4 text-slate-400" /></button>
+                    <button onClick={() => setShowProductForm(false)} className="p-1.5 rounded-lg hover:bg-slate-700 transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
                   </div>
-                  <div className="mb-4 flex items-center gap-3">
-                    <label className="text-sm text-blue-200 font-medium">Number of products to create:</label>
-                    <input type="number" min="2" max="50" value={bulkProductCount} onChange={e => setBulkProductCount(Math.min(50, Math.max(2, parseInt(e.target.value) || 2)))} className="w-20 border border-white/15 rounded bg-white/10 text-white px-3 py-1.5 text-sm" />
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2"><Label>Base Name <span className="text-blue-300/50 text-xs">(will become "Name #1", "Name #2"…)</span></Label><Input value={bulkBaseForm.name} onChange={e => setBulkBaseForm({ ...bulkBaseForm, name: e.target.value })} placeholder="e.g. Gurkha Tee" /></div>
-                    <div className="md:col-span-2"><Label>Description</Label><textarea value={bulkBaseForm.description} onChange={e => setBulkBaseForm({ ...bulkBaseForm, description: e.target.value })} className="w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm min-h-[80px] resize-y" /></div>
-                    <div><Label>Category</Label><Input value={bulkBaseForm.category} onChange={e => setBulkBaseForm({ ...bulkBaseForm, category: e.target.value })} placeholder="Tops, Jackets..." /></div>
-                    <div><Label>Price (NZD)</Label><Input type="number" value={bulkBaseForm.price} onChange={e => setBulkBaseForm({ ...bulkBaseForm, price: e.target.value })} /></div>
-                    <div className="md:col-span-2"><Label>Material</Label><Input value={bulkBaseForm.material} onChange={e => setBulkBaseForm({ ...bulkBaseForm, material: e.target.value })} /></div>
-                    <div className="flex items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={bulkBaseForm.featured} onChange={e => setBulkBaseForm({ ...bulkBaseForm, featured: e.target.checked })} />Featured</label>
-                      <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={bulkBaseForm.newArrival} onChange={e => setBulkBaseForm({ ...bulkBaseForm, newArrival: e.target.checked })} />New Arrival</label>
-                    </div>
-                    <div className="md:col-span-2">
-                      <Label>Shared Images</Label>
-                      <div className="mt-1 border-2 border-dashed border-white/10 rounded p-4 text-center">
-                        <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={e => setBulkImageFiles(e.target.files)} className="hidden" id="bulk-img-upload" />
-                        <label htmlFor="bulk-img-upload" className="cursor-pointer flex flex-col items-center gap-2">
-                          <Upload className="w-6 h-6 text-blue-300/70" />
-                          <span className="text-sm text-blue-300/70">{bulkImageFiles ? `${bulkImageFiles.length} file(s) selected` : 'Click to select shared images'}</span>
+
+                  {/* Scrollable body */}
+                  <div className="overflow-y-auto flex-1 p-6 space-y-5">
+
+                    {/* Basic Info */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <Label className="text-slate-300">Name</Label>
+                        <Input value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label className="text-slate-300">Description</Label>
+                        <textarea value={productForm.description} onChange={e => setProductForm({ ...productForm, description: e.target.value })} className="mt-1 w-full border border-slate-600 rounded-md bg-slate-800 text-white px-3 py-2 text-sm min-h-[80px] resize-y focus:outline-none focus:ring-2 focus:ring-[#DC143C]/50" />
+                      </div>
+                      <div>
+                        <Label className="text-slate-300">Category</Label>
+                        <Input value={productForm.category} onChange={e => setProductForm({ ...productForm, category: e.target.value })} placeholder="Tops, Jackets..." className="mt-1 bg-slate-800 border-slate-600 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-slate-300">Price (NZD)</Label>
+                        <Input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label className="text-slate-300">Material</Label>
+                        <Input value={productForm.material} onChange={e => setProductForm({ ...productForm, material: e.target.value })} className="mt-1 bg-slate-800 border-slate-600 text-white" />
+                      </div>
+                      <div className="flex items-center gap-6">
+                        <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
+                          <input type="checkbox" checked={productForm.featured} onChange={e => setProductForm({ ...productForm, featured: e.target.checked })} className="w-4 h-4 accent-[#DC143C]" />Featured
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
+                          <input type="checkbox" checked={productForm.newArrival} onChange={e => setProductForm({ ...productForm, newArrival: e.target.checked })} className="w-4 h-4 accent-[#DC143C]" />New Arrival
                         </label>
                       </div>
                     </div>
-                    <div className="md:col-span-2">
-                      <div className="flex justify-between mb-2">
-                        <Label>Shared Variants</Label>
-                        <button type="button" onClick={() => setBulkBaseForm({ ...bulkBaseForm, variants: [...bulkBaseForm.variants, { size: '', color: '', colorHex: '#000000', stock: '' }] })} className="text-xs text-[#DC143C] hover:underline">+ Add variant</button>
-                      </div>
-                      <div className="space-y-2">
-                        {bulkBaseForm.variants.map((v, i) => (
-                          <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                            <Input placeholder="Size" value={v.size} onChange={e => { const vs = [...bulkBaseForm.variants]; vs[i].size = e.target.value; setBulkBaseForm({ ...bulkBaseForm, variants: vs }); }} />
-                            <Input placeholder="Color" value={v.color} onChange={e => { const vs = [...bulkBaseForm.variants]; vs[i].color = e.target.value; setBulkBaseForm({ ...bulkBaseForm, variants: vs }); }} />
-                            <input type="color" value={v.colorHex} onChange={e => { const vs = [...bulkBaseForm.variants]; vs[i].colorHex = e.target.value; setBulkBaseForm({ ...bulkBaseForm, variants: vs }); }} className="h-9 w-full rounded border cursor-pointer" />
-                            <Input type="number" placeholder="Stock" value={v.stock} onChange={e => { const vs = [...bulkBaseForm.variants]; vs[i].stock = e.target.value; setBulkBaseForm({ ...bulkBaseForm, variants: vs }); }} />
-                            <Button variant="outline" size="sm" className="text-red-500" onClick={() => { const vs = bulkBaseForm.variants.filter((_, j) => j !== i); setBulkBaseForm({ ...bulkBaseForm, variants: vs }); }}><X className="w-3 h-3" /></Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  {bulkProgress && (
-                    <div className="mt-4">
-                      <div className="flex justify-between text-xs text-blue-200 mb-1"><span>Creating products…</span><span>{bulkProgress.done}/{bulkProgress.total}</span></div>
-                      <div className="w-full bg-white/10 rounded-full h-2"><div className="bg-[#DC143C] h-2 rounded-full transition-all" style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }} /></div>
-                    </div>
-                  )}
-                  <div className="flex gap-3 mt-6">
-                    <Button onClick={handleSaveBulkProducts} disabled={savingBulk} className="bg-[#DC143C] text-white hover:bg-[#b01030]">{savingBulk ? `Creating... (${bulkProgress?.done ?? 0}/${bulkProductCount})` : `Create ${bulkProductCount} Products`}</Button>
-                    <Button variant="outline" onClick={() => setShowBulkProductForm(false)}>Cancel</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
 
-            {showProductForm && (
-              <Card className="flag-card border-0 shadow-sm">
-                <CardContent className="p-6">
-                  <h3 className="font-semibold text-white mb-4">{editingProduct ? 'Edit Product' : 'New Product'}</h3>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2"><Label>Name</Label><Input value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} /></div>
-                    <div className="md:col-span-2"><Label>Description</Label><textarea value={productForm.description} onChange={e => setProductForm({ ...productForm, description: e.target.value })} className="w-full border border-white/15 rounded bg-white/10 text-white px-3 py-2 text-sm min-h-[80px] resize-y" /></div>
-                    <div><Label>Category</Label><Input value={productForm.category} onChange={e => setProductForm({ ...productForm, category: e.target.value })} placeholder="Tops, Jackets..." /></div>
-                    <div><Label>Price (NZD)</Label><Input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} /></div>
-                    <div className="md:col-span-2"><Label>Material</Label><Input value={productForm.material} onChange={e => setProductForm({ ...productForm, material: e.target.value })} /></div>
-                    <div className="flex items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={productForm.featured} onChange={e => setProductForm({ ...productForm, featured: e.target.checked })} />Featured</label>
-                      <label className="flex items-center gap-2 cursor-pointer text-sm"><input type="checkbox" checked={productForm.newArrival} onChange={e => setProductForm({ ...productForm, newArrival: e.target.checked })} />New Arrival</label>
-                    </div>
-                    <div className="md:col-span-2">
-                      <Label>Product Images</Label>
-                      <div className="mt-1 border-2 border-dashed border-white/10 rounded p-4 text-center">
+                    {/* ── Image Management ── */}
+                    <div>
+                      <Label className="text-slate-300">Product Images</Label>
+
+                      {/* Show existing images in edit mode */}
+                      {editingProduct && existingImages.length > 0 && (
+                        <div className="mt-2 mb-3">
+                          <p className="text-xs text-slate-400 mb-2">Current images — click × to remove</p>
+                          <div className="flex flex-wrap gap-2">
+                            {existingImages.map((img, idx) => {
+                              const isDeleted = deletedImages.includes(img);
+                              return (
+                                <div key={idx} className={`relative group rounded-lg overflow-hidden border-2 transition-all ${isDeleted ? 'border-red-500 opacity-40' : 'border-slate-600'}`}>
+                                  <img src={img} alt={`img-${idx}`} className="w-20 h-20 object-cover" onError={e => { (e.target as HTMLImageElement).src = '/placeholder.jpg'; }} />
+                                  <button
+                                    onClick={() => {
+                                      if (isDeleted) {
+                                        setDeletedImages(prev => prev.filter(d => d !== img));
+                                      } else {
+                                        setDeletedImages(prev => [...prev, img]);
+                                      }
+                                    }}
+                                    className={`absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-all ${isDeleted ? 'bg-green-500 text-white' : 'bg-red-500 text-white opacity-0 group-hover:opacity-100'}`}
+                                  >
+                                    {isDeleted ? '↩' : '×'}
+                                  </button>
+                                  {isDeleted && <div className="absolute inset-0 flex items-center justify-center"><span className="text-red-400 text-xs font-bold">Removed</span></div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {deletedImages.length > 0 && (
+                            <p className="text-xs text-red-400 mt-1">{deletedImages.length} image(s) will be removed on save</p>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-1 border-2 border-dashed border-slate-600 rounded-lg p-4 text-center hover:border-slate-500 transition-colors">
                         <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={e => setImageFiles(e.target.files)} className="hidden" id="img-upload" />
                         <label htmlFor="img-upload" className="cursor-pointer flex flex-col items-center gap-2">
-                          <Upload className="w-6 h-6 text-blue-300/70" />
-                          <span className="text-sm text-blue-300/70">{imageFiles ? `${imageFiles.length} file(s) selected` : 'Click to select images'}</span>
+                          <Upload className="w-6 h-6 text-slate-400" />
+                          <span className="text-sm text-slate-400">
+                            {imageFiles ? `${imageFiles.length} new file(s) selected` : editingProduct ? 'Upload additional images' : 'Click to select images'}
+                          </span>
+                          {imageFiles && <span className="text-xs text-slate-500">These will be added alongside kept images</span>}
                         </label>
                       </div>
-                      {editingProduct?.images?.length > 0 && !imageFiles && <p className="text-xs text-blue-300/70 mt-1">Current: {editingProduct.images.length} image(s). Upload new to replace.</p>}
                     </div>
-                    <div className="md:col-span-2">
-                      <div className="flex justify-between mb-2">
-                        <Label>Variants (Size / Color / Stock)</Label>
-                        <button type="button" onClick={() => setProductForm({ ...productForm, variants: [...productForm.variants, { size: '', color: '', colorHex: '#000000', stock: '' }] })} className="text-xs text-[#DC143C] hover:underline">+ Add variant</button>
+
+                    {/* ── Variants ── */}
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <Label className="text-slate-300">Variants</Label>
+                        <div className="flex items-center gap-3">
+                          {/* Stock mode toggle */}
+                          <div className="flex items-center gap-1 bg-slate-800 border border-slate-600 rounded-lg p-0.5">
+                            <button
+                              onClick={() => setStockMode('individual')}
+                              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${stockMode === 'individual' ? 'bg-[#DC143C] text-white' : 'text-slate-400 hover:text-white'}`}
+                            >Individual Stock</button>
+                            <button
+                              onClick={() => setStockMode('bulk')}
+                              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${stockMode === 'bulk' ? 'bg-[#DC143C] text-white' : 'text-slate-400 hover:text-white'}`}
+                            >Bulk Stock</button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setProductForm({ ...productForm, variants: [...productForm.variants, { size: '', color: '', colorHex: '#000000', stock: '' }] })}
+                            className="text-xs text-[#DC143C] hover:underline font-medium"
+                          >+ Add variant</button>
+                        </div>
                       </div>
+
+                      {/* Bulk stock input */}
+                      {stockMode === 'bulk' && (
+                        <div className="flex items-center gap-3 mb-3 p-3 bg-slate-800/60 border border-slate-600 rounded-lg">
+                          <span className="text-xs text-slate-300 font-medium">Set stock for ALL variants:</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            placeholder="e.g. 50"
+                            value={bulkStock}
+                            onChange={e => setBulkStock(e.target.value)}
+                            className="w-28 bg-slate-700 border-slate-500 text-white text-sm h-8"
+                          />
+                          <span className="text-xs text-slate-500">units each</span>
+                        </div>
+                      )}
+
+                      {/* Preset color swatches */}
                       <div className="space-y-2">
                         {productForm.variants.map((v, i) => (
-                          <div key={i} className="grid grid-cols-5 gap-2 items-center">
-                            <Input placeholder="Size" value={v.size} onChange={e => { const vs = [...productForm.variants]; vs[i].size = e.target.value; setProductForm({ ...productForm, variants: vs }); }} />
-                            <Input placeholder="Color" value={v.color} onChange={e => { const vs = [...productForm.variants]; vs[i].color = e.target.value; setProductForm({ ...productForm, variants: vs }); }} />
-                            <input type="color" value={v.colorHex} onChange={e => { const vs = [...productForm.variants]; vs[i].colorHex = e.target.value; setProductForm({ ...productForm, variants: vs }); }} className="h-9 w-full rounded border cursor-pointer" />
-                            <Input type="number" placeholder="Stock" value={v.stock} onChange={e => { const vs = [...productForm.variants]; vs[i].stock = e.target.value; setProductForm({ ...productForm, variants: vs }); }} />
-                            <Button variant="outline" size="sm" className="text-red-500" onClick={() => { const vs = productForm.variants.filter((_, j) => j !== i); setProductForm({ ...productForm, variants: vs }); }}><X className="w-3 h-3" /></Button>
+                          <div key={i} className="grid gap-2 items-start p-3 bg-slate-800/40 border border-slate-700 rounded-lg" style={{ gridTemplateColumns: '1fr 1fr auto auto' }}>
+                            <Input
+                              placeholder="Size (e.g. M)"
+                              value={v.size}
+                              onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], size: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                              className="bg-slate-800 border-slate-600 text-white text-sm h-9"
+                            />
+                            {/* Color field with professional picker */}
+                            <div className="relative">
+                              <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-600 rounded-md px-2 h-9">
+                                {/* Color preview swatch */}
+                                <button
+                                  type="button"
+                                  onClick={() => setColorPickerOpen(colorPickerOpen === i ? null : i)}
+                                  className="w-5 h-5 rounded-sm border border-slate-500 shrink-0 transition-transform hover:scale-110"
+                                  style={{ backgroundColor: v.colorHex || '#000' }}
+                                  title="Pick color"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Color name"
+                                  value={v.color}
+                                  onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], color: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                                  className="flex-1 bg-transparent text-white text-sm outline-none min-w-0"
+                                />
+                              </div>
+                              {/* Color picker dropdown */}
+                              {colorPickerOpen === i && (
+                                <div className="absolute top-10 left-0 z-50 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-3 w-56">
+                                  <p className="text-xs text-slate-400 mb-2 font-medium">Pick a color</p>
+                                  {/* Native color input */}
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <input
+                                      type="color"
+                                      value={v.colorHex}
+                                      onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                                      className="w-8 h-8 rounded cursor-pointer border-0 bg-transparent"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={v.colorHex}
+                                      onChange={e => { const hex = e.target.value; if (/^#[0-9A-Fa-f]{0,6}$/.test(hex)) { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex }; setProductForm({ ...productForm, variants: vs }); } }}
+                                      className="flex-1 bg-slate-700 border border-slate-500 rounded px-2 py-1 text-xs text-white font-mono"
+                                      placeholder="#000000"
+                                    />
+                                  </div>
+                                  {/* Preset swatches */}
+                                  <p className="text-xs text-slate-400 mb-1.5">Presets</p>
+                                  <div className="grid grid-cols-8 gap-1">
+                                    {[
+                                      '#000000','#FFFFFF','#1a1a1a','#808080','#C0C0C0',
+                                      '#DC143C','#8B0000','#FF6B6B','#FF8C00','#FFD700',
+                                      '#006400','#228B22','#90EE90','#00008B','#4169E1',
+                                      '#87CEEB','#4B0082','#9370DB','#8B4513','#D2691E',
+                                      '#F5F5DC','#FFF8DC','#2F4F4F','#556B2F','#8FBC8F',
+                                    ].map(hex => (
+                                      <button
+                                        key={hex}
+                                        type="button"
+                                        onClick={() => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex }; setProductForm({ ...productForm, variants: vs }); setColorPickerOpen(null); }}
+                                        className="w-5 h-5 rounded border border-slate-600 hover:scale-125 transition-transform"
+                                        style={{ backgroundColor: hex }}
+                                        title={hex}
+                                      />
+                                    ))}
+                                  </div>
+                                  <button onClick={() => setColorPickerOpen(null)} className="mt-3 w-full text-xs text-slate-400 hover:text-white py-1">Close</button>
+                                </div>
+                              )}
+                            </div>
+                            {/* Stock — hidden if bulk mode */}
+                            {stockMode === 'individual' ? (
+                              <Input
+                                type="number"
+                                placeholder="Stock"
+                                min="0"
+                                value={v.stock}
+                                onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], stock: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                                className="bg-slate-800 border-slate-600 text-white text-sm h-9"
+                              />
+                            ) : (
+                              <div className="h-9 flex items-center justify-center text-xs text-slate-500 bg-slate-800/40 border border-slate-700 rounded-md px-2">
+                                bulk
+                              </div>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-red-400 border-red-900/50 hover:bg-red-900/30 h-9 w-9 p-0"
+                              onClick={() => { const vs = productForm.variants.filter((_, j) => j !== i); setProductForm({ ...productForm, variants: vs }); }}
+                              disabled={productForm.variants.length === 1}
+                            ><X className="w-3 h-3" /></Button>
                           </div>
                         ))}
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-3 mt-6">
-                    <Button onClick={handleSaveProduct} disabled={savingProduct} className="bg-[#1a1a1a] text-white">{savingProduct ? 'Saving...' : editingProduct ? 'Update Product' : 'Create Product'}</Button>
-                    <Button variant="outline" onClick={() => setShowProductForm(false)}>Cancel</Button>
+
+                  {/* Footer */}
+                  <div className="flex gap-3 px-6 py-4 border-t border-slate-700 shrink-0">
+                    <Button onClick={handleSaveProduct} disabled={savingProduct} className="flex-1 bg-[#DC143C] hover:bg-[#b01030] text-white">
+                      {savingProduct ? 'Saving...' : editingProduct ? 'Update Product' : 'Create Product'}
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowProductForm(false)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )}
 
             <Card className="flag-card border-0 shadow-sm">
