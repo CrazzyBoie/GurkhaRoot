@@ -68,7 +68,7 @@ export function Admin() {
   const activeTab = tab || 'dashboard';
   const setTab = (t: string) => navigate(`/admin/${t}`);
 
-  const { user, isLoading: authLoading } = useAuthStore();
+  const { user } = useAuthStore();
   const isSuperAdmin = user?.role === 'super_admin';
 
   // ── Dashboard ──────────────────────────────────────────────────────────────
@@ -190,14 +190,13 @@ export function Admin() {
 
   // ── Tab load effects ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (authLoading) return;          // ← wait until session is confirmed
     if (activeTab === 'dashboard') loadDashboard();
     if (activeTab === 'products') loadProducts();
     if (activeTab === 'orders' && isSuperAdmin) loadOrders();
     if (activeTab === 'coupons' && isSuperAdmin) loadCoupons();
     if (activeTab === 'users' && isSuperAdmin) loadUsers();
     if (activeTab === 'shipping') loadShipping();
-  }, [activeTab, productPage, orderPage, usersPage, authLoading]);
+  }, [activeTab, productPage, orderPage, usersPage]);
 
   // ── Loaders ────────────────────────────────────────────────────────────────
   const loadDashboard = async () => {
