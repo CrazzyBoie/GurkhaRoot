@@ -2,6 +2,18 @@ import { create } from 'zustand';
 import { productsApi } from '@/services/api';
 import type { Product, Category, Pagination, ProductFilters } from '@/types';
 
+// ── Simple in-memory TTL cache (2 min) to avoid redundant Firestore fetches ──
+const CACHE_TTL_MS = 2 * 60 * 1000;
+const cache: Record<string, { data: unknown; ts: number }> = {};
+function cacheGet<T>(key: string): T | null {
+  const entry = cache[key];
+  if (entry && Date.now() - entry.ts < CACHE_TTL_MS) return entry.data as T;
+  return null;
+}
+function cacheSet(key: string, data: unknown) {
+  cache[key] = { data, ts: Date.now() };
+}
+
 interface ProductState {
   products: Product[];
   categories: Category[];
@@ -70,9 +82,16 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   fetchProduct: async (id) => {
+    // Return from cache if still fresh
+    const cached = cacheGet<Product>(`product:${id}`);
+    if (cached) {
+      set({ currentProduct: cached, isProductLoading: false });
+      return;
+    }
     set({ isProductLoading: true, error: null, currentProduct: null });
     try {
       const response = await productsApi.getProduct(id);
+      cacheSet(`product:${id}`, response.data);
       set({ currentProduct: response.data });
     } catch (error: any) {
       set({ error: error?.message || 'Failed to load product' });
@@ -82,8 +101,11 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   fetchCategories: async () => {
+    const cached = cacheGet<Category[]>('categories');
+    if (cached) { set({ categories: cached }); return; }
     try {
       const response = await productsApi.getCategories();
+      cacheSet('categories', response.data.categories);
       set({ categories: response.data.categories });
     } catch (error) {
       console.error('Failed to fetch categories:', error);
@@ -91,9 +113,12 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   fetchFeaturedProducts: async () => {
+    const cached = cacheGet<Product[]>('featured');
+    if (cached) { set({ featuredProducts: cached, isFeaturedLoading: false }); return; }
     set({ isFeaturedLoading: true });
     try {
       const response = await productsApi.getProducts({ featured: true, limit: 8 });
+      cacheSet('featured', response.data.products);
       set({ featuredProducts: response.data.products });
     } catch (error) {
       console.error('Failed to fetch featured products:', error);
@@ -103,9 +128,12 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   fetchNewArrivals: async () => {
+    const cached = cacheGet<Product[]>('newArrivals');
+    if (cached) { set({ newArrivals: cached, isNewArrivalsLoading: false }); return; }
     set({ isNewArrivalsLoading: true });
     try {
       const response = await productsApi.getProducts({ newArrival: true, limit: 8 });
+      cacheSet('newArrivals', response.data.products);
       set({ newArrivals: response.data.products });
     } catch (error) {
       console.error('Failed to fetch new arrivals:', error);

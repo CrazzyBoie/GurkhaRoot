@@ -121,13 +121,22 @@ export const getProduct = async (req, res) => {
     } catch {
       rSnap = await db.collection('reviews').where('productId', '==', id).get();
     }
-    const reviews = [];
-    for (const rdoc of rSnap.docs) {
-      const r    = { id: rdoc.id, ...rdoc.data() };
-      const uSnap = await db.collection('users').doc(r.userId).get();
-      r.user = uSnap.exists ? { name: uSnap.data().name } : { name: 'Unknown' };
-      reviews.push(r);
+    // Batch-fetch all reviewer user docs in parallel instead of one-by-one
+    const rawReviews = rSnap.docs.map(rdoc => ({ id: rdoc.id, ...rdoc.data() }));
+    const uniqueUserIds = [...new Set(rawReviews.map(r => r.userId).filter(Boolean))];
+    const userMap = {};
+    if (uniqueUserIds.length) {
+      const userSnaps = await Promise.all(
+        uniqueUserIds.map(uid => db.collection('users').doc(uid).get())
+      );
+      userSnaps.forEach(uSnap => {
+        if (uSnap.exists) userMap[uSnap.id] = { name: uSnap.data().name };
+      });
     }
+    const reviews = rawReviews.map(r => ({
+      ...r,
+      user: userMap[r.userId] || { name: 'Unknown' },
+    }));
     product.reviews     = reviews;
     product.reviewCount = reviews.length;
     product.rating      = reviews.length
@@ -290,11 +299,14 @@ export const bulkImport = async (req, res) => {
 // ── getCategories ─────────────────────────────────────────────────────────────
 export const getCategories = async (req, res) => {
   try {
-    const snap     = await getDb().collection('products').get();
+    const db = getDb();
+    // Use select() to fetch only the 'category' field — avoids transferring
+    // images, descriptions, variants etc. for every product doc
+    const snap = await db.collection('products').select('category').get();
     const countMap = {};
     snap.forEach(d => {
       const cat = d.data().category;
-      countMap[cat] = (countMap[cat] || 0) + 1;
+      if (cat) countMap[cat] = (countMap[cat] || 0) + 1;
     });
     const categories = Object.entries(countMap).map(([name, count]) => ({ name, count }));
     res.json({ categories });
