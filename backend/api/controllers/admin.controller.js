@@ -89,11 +89,11 @@ export const getRecentOrders = async (req, res) => {
 
 // ── getStockOverview ──────────────────────────────────────────────────────────
 // Returns every variant with: currentStock, damagedStock, soldQty (from orders)
+// Orphaned variants (productId points to a deleted product) are excluded.
 export const getStockOverview = async (req, res) => {
   try {
     const db = getDb();
 
-    // Fetch all variants, products, and completed (non-cancelled) order items
     const [variantSnap, productSnap, orderSnap] = await Promise.all([
       db.collection('variants').get(),
       db.collection('products').get(),
@@ -103,6 +103,17 @@ export const getStockOverview = async (req, res) => {
     const variants = snapToArr(variantSnap);
     const products = {};
     productSnap.forEach(d => { products[d.id] = { id: d.id, ...d.data() }; });
+
+    // Collect orphaned variant IDs (productId not in products map)
+    const orphanIds = variants.filter(v => !products[v.productId]).map(v => v.id);
+
+    // Auto-delete orphans in a batch so they don't accumulate
+    if (orphanIds.length > 0) {
+      console.log(`Auto-deleting ${orphanIds.length} orphaned variant(s):`, orphanIds);
+      const batch = db.batch();
+      orphanIds.forEach(id => batch.delete(db.collection('variants').doc(id)));
+      await batch.commit();
+    }
 
     // Tally sold quantities per variantId from order items
     const soldByVariant = {};
@@ -114,26 +125,59 @@ export const getStockOverview = async (req, res) => {
       });
     });
 
-    const result = variants.map(v => ({
-      id:           v.id,
-      productId:    v.productId,
-      productName:  products[v.productId]?.name || 'Unknown',
-      productImage: products[v.productId]?.images?.[0] || null,
-      size:         v.size,
-      color:        v.color,
-      colorHex:     v.colorHex,
-      stock:        v.stock,           // current available stock
-      damagedStock: v.damagedStock || 0,
-      soldQty:      soldByVariant[v.id] || 0,
-    }));
+    // Only include variants whose product exists
+    const result = variants
+      .filter(v => products[v.productId])
+      .map(v => ({
+        id:           v.id,
+        productId:    v.productId,
+        productName:  products[v.productId].name,
+        productImage: products[v.productId].images?.[0] || null,
+        size:         v.size,
+        color:        v.color,
+        colorHex:     v.colorHex,
+        stock:        v.stock,
+        damagedStock: v.damagedStock || 0,
+        soldQty:      soldByVariant[v.id] || 0,
+      }));
 
     // Sort: low stock first
     result.sort((a, b) => a.stock - b.stock);
 
-    res.json({ variants: result });
+    res.json({ variants: result, orphansRemoved: orphanIds.length });
   } catch (error) {
     console.error('Stock overview error:', error);
     res.status(500).json({ message: 'Failed to get stock overview' });
+  }
+};
+
+// ── cleanupOrphanedVariants ───────────────────────────────────────────────────
+// POST /admin/cleanup-variants — manual trigger to purge orphaned variants
+export const cleanupOrphanedVariants = async (req, res) => {
+  try {
+    const db = getDb();
+    const [variantSnap, productSnap] = await Promise.all([
+      db.collection('variants').get(),
+      db.collection('products').get(),
+    ]);
+
+    const productIds = new Set();
+    productSnap.forEach(d => productIds.add(d.id));
+
+    const orphans = snapToArr(variantSnap).filter(v => !productIds.has(v.productId));
+
+    if (orphans.length === 0) {
+      return res.json({ message: 'No orphaned variants found', deleted: 0 });
+    }
+
+    const batch = db.batch();
+    orphans.forEach(v => batch.delete(db.collection('variants').doc(v.id)));
+    await batch.commit();
+
+    res.json({ message: `Deleted ${orphans.length} orphaned variant(s)`, deleted: orphans.length });
+  } catch (error) {
+    console.error('Cleanup orphans error:', error);
+    res.status(500).json({ message: 'Failed to cleanup orphaned variants' });
   }
 };
 
