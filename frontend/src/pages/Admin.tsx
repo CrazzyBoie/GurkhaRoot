@@ -228,11 +228,13 @@ export function Admin() {
     title: string;
     description: string;
     itemName?: string;
+    confirmLabel?: string;
+    variant?: 'danger' | 'warning';
     onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => { } });
 
-  const openConfirm = (title: string, description: string, itemName: string, onConfirm: () => void) => {
-    setConfirmModal({ open: true, title, description, itemName, onConfirm });
+  const openConfirm = (title: string, description: string, itemName: string, onConfirm: () => void, confirmLabel?: string, variant?: 'danger' | 'warning') => {
+    setConfirmModal({ open: true, title, description, itemName, onConfirm, confirmLabel, variant });
   };
   const closeConfirm = () => setConfirmModal(prev => ({ ...prev, open: false }));
 
@@ -540,21 +542,36 @@ export function Admin() {
     const isRefundAction = newStatus === 'CANCELLED' || newStatus === 'RETURNED';
     if (isRefundAction) {
       const order = orders.find(o => o.id === orderId);
-      const label = newStatus === 'CANCELLED' ? 'Cancel' : 'Mark as Returned';
-      const msg = `${label} order ${order?.orderNumber} ($${order?.total?.toFixed(2)})?\n\nIf a payment exists it will be automatically refunded to the customer.`;
-      if (!window.confirm(msg)) return;
+      const isCancelling = newStatus === 'CANCELLED';
+      const title = isCancelling ? 'Cancel Order' : 'Mark as Returned';
+      const description = isCancelling
+        ? 'This will cancel the order. If a payment was made it will be automatically refunded to the customer.'
+        : 'This will mark the order as returned and trigger an automatic refund to the customer if a payment exists.';
+      const confirmLabel = isCancelling ? 'Yes, cancel order' : 'Yes, mark as returned';
+      const itemName = `${order?.orderNumber} — $${order?.total?.toFixed(2)}`;
+      openConfirm(title, description, itemName, async () => {
+        try {
+          const res = await ordersApi.updateStatus(orderId, newStatus);
+          const data = res.data;
+          if (data.refunded) {
+            toast.success('Order ' + newStatus.toLowerCase() + ' — $' + data.refundAmount?.toFixed(2) + ' refunded to customer');
+          } else {
+            toast.success('Order status updated to ' + newStatus);
+          }
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...data.order } : o));
+        } catch (e: any) {
+          toast.error(e.response?.data?.message || 'Failed to update order status');
+        }
+        closeConfirm();
+      }, confirmLabel, 'warning');
+      return;
     }
 
+    // Non-refund status change — just update directly
     try {
       const res = await ordersApi.updateStatus(orderId, newStatus);
       const data = res.data;
-
-      if (data.refunded) {
-        toast.success('Order ' + newStatus.toLowerCase() + ' — $' + data.refundAmount?.toFixed(2) + ' refunded to customer');
-      } else {
-        toast.success('Order status updated to ' + newStatus);
-      }
-
+      toast.success('Order status updated to ' + newStatus);
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...data.order } : o));
     } catch (e: any) {
       toast.error(e.response?.data?.message || 'Failed to update order status');
@@ -2066,13 +2083,15 @@ export function Admin() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeConfirm} />
           <div className="relative bg-[#0f172a] rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Red accent bar */}
-            <div className="h-1 w-full bg-gradient-to-r from-[#DC143C] to-[#ff4d6d]" />
+            {/* Accent bar — red for danger, orange for warning */}
+            <div className={`h-1 w-full bg-gradient-to-r ${confirmModal.variant === 'warning' ? 'from-orange-500 to-amber-400' : 'from-[#DC143C] to-[#ff4d6d]'}`} />
             <div className="p-6">
               {/* Icon + title */}
               <div className="flex items-start gap-4 mb-5">
-                <div className="w-11 h-11 rounded-full bg-red-950/60 border border-red-800/40 flex items-center justify-center shrink-0">
-                  <Trash2 className="w-5 h-5 text-[#DC143C]" />
+                <div className={`w-11 h-11 rounded-full border flex items-center justify-center shrink-0 ${confirmModal.variant === 'warning' ? 'bg-orange-950/60 border-orange-800/40' : 'bg-red-950/60 border-red-800/40'}`}>
+                  {confirmModal.variant === 'warning'
+                    ? <AlertTriangle className="w-5 h-5 text-orange-400" />
+                    : <Trash2 className="w-5 h-5 text-[#DC143C]" />}
                 </div>
                 <div>
                   <h3 className="text-base font-semibold text-white">{confirmModal.title}</h3>
@@ -2082,7 +2101,7 @@ export function Admin() {
               {/* Item name pill */}
               {confirmModal.itemName && (
                 <div className="flex items-center gap-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2.5 mb-5">
-                  <span className="text-xs text-slate-400 shrink-0">Deleting:</span>
+                  <span className="text-xs text-slate-400 shrink-0">{confirmModal.variant === 'warning' ? 'Order:' : 'Deleting:'}</span>
                   <span className="text-sm font-medium text-white truncate">{confirmModal.itemName}</span>
                 </div>
               )}
@@ -2090,9 +2109,9 @@ export function Admin() {
               <div className="flex gap-3">
                 <button
                   onClick={confirmModal.onConfirm}
-                  className="flex-1 bg-[#DC143C] hover:bg-[#b01030] active:scale-95 text-white text-sm font-medium py-2.5 rounded-lg transition-all"
+                  className={`flex-1 active:scale-95 text-white text-sm font-medium py-2.5 rounded-lg transition-all ${confirmModal.variant === 'warning' ? 'bg-orange-600 hover:bg-orange-500' : 'bg-[#DC143C] hover:bg-[#b01030]'}`}
                 >
-                  Delete permanently
+                  {confirmModal.confirmLabel || 'Delete permanently'}
                 </button>
                 <button
                   onClick={closeConfirm}
