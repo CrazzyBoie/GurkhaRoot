@@ -85,8 +85,8 @@ export const productsApi = {
     api.get('/products', { params }),
   getProduct: (id: string) => api.get(`/products/${id}`),
   getCategories: () => api.get('/products/categories'),
-  createProduct: (data: FormData) => api.post('/products', data),
-  updateProduct: (id: string, data: FormData) => api.put(`/products/${id}`, data),
+  createProduct: (data: FormData | Record<string, unknown>) => api.post('/products', data),
+  updateProduct: (id: string, data: FormData | Record<string, unknown>) => api.put(`/products/${id}`, data),
   deleteProduct: (id: string) => api.delete(`/products/${id}`),
 };
 

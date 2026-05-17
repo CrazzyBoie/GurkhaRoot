@@ -148,6 +148,9 @@ export function Admin() {
   const [bulkStock, setBulkStock] = useState('');
   // color picker open index
   const [colorPickerOpen, setColorPickerOpen] = useState<number | null>(null);
+  // cloudinary upload progress
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>('');
 
 
   // ── Stock Management ──────────────────────────────────────────────────────
@@ -431,45 +434,75 @@ export function Admin() {
     setShowProductForm(true);
   };
 
+  // ── Upload a single file directly to Cloudinary ───────────────────────────
+  const uploadToCloudinary = async (file: File): Promise<string> => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('upload_preset', 'gurkha_roots'); // unsigned preset name
+    fd.append('cloud_name', 'dyjaubiz7');
+    const res = await fetch('https://api.cloudinary.com/v1_1/dyjaubiz7/image/upload', {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) throw new Error('Cloudinary upload failed');
+    const data = await res.json();
+    return data.secure_url as string;
+  };
+
   const handleSaveProduct = async () => {
     setSavingProduct(true);
     try {
-      const formData = new FormData();
-      formData.append('name', productForm.name);
-      formData.append('description', productForm.description);
-      formData.append('category', productForm.category);
-      formData.append('price', productForm.price);
-      formData.append('material', productForm.material);
-      formData.append('featured', String(productForm.featured));
-      formData.append('newArrival', String(productForm.newArrival));
+      // 1️⃣  Upload any new local files directly to Cloudinary
+      let newImageUrls: string[] = [];
+      if (imageFiles && imageFiles.length > 0) {
+        setUploadingImages(true);
+        const files = Array.from(imageFiles);
+        for (let idx = 0; idx < files.length; idx++) {
+          setUploadProgress(`Uploading image ${idx + 1} of ${files.length}…`);
+          newImageUrls.push(await uploadToCloudinary(files[idx]));
+        }
+        setUploadingImages(false);
+        setUploadProgress('');
+      }
 
-      // Apply bulk stock if in bulk mode
+      // 2️⃣  Build final images array
+      const keptImages = editingProduct
+        ? existingImages.filter(img => !deletedImages.includes(img))
+        : [];
+      const finalImages = [...keptImages, ...newImageUrls];
+
+      // 3️⃣  Apply bulk stock if needed
       const finalVariants = productForm.variants.map(v => ({
         ...v,
         stock: stockMode === 'bulk' ? (parseInt(bulkStock) || 0) : (parseInt(v.stock) || 0),
       }));
-      formData.append('variants', JSON.stringify(finalVariants));
 
-      // In edit mode: pass the images we want to KEEP (existing minus deleted)
+      // 4️⃣  Send plain JSON — no files, no FormData
+      const payload = {
+        name: productForm.name,
+        description: productForm.description,
+        category: productForm.category,
+        price: productForm.price,
+        material: productForm.material,
+        featured: productForm.featured,
+        newArrival: productForm.newArrival,
+        variants: finalVariants,
+        images: finalImages,
+      };
+
       if (editingProduct) {
-        const keptImages = existingImages.filter(img => !deletedImages.includes(img));
-        formData.append('keptImages', JSON.stringify(keptImages));
-      }
-
-      // New image files (appended on top of kept images on the server)
-      if (imageFiles) Array.from(imageFiles).forEach(file => formData.append('images', file));
-
-      if (editingProduct) {
-        await productsApi.updateProduct(editingProduct.id, formData);
+        await productsApi.updateProduct(editingProduct.id, payload);
         toast.success('Product updated');
       } else {
-        await productsApi.createProduct(formData);
+        await productsApi.createProduct(payload);
         toast.success('Product created');
       }
       setShowProductForm(false);
       loadProducts();
     } catch (e: any) {
-      toast.error(e.response?.data?.message || 'Failed to save product');
+      setUploadingImages(false);
+      setUploadProgress('');
+      toast.error(e.response?.data?.message || e.message || 'Failed to save product');
     } finally {
       setSavingProduct(false);
     }
@@ -1245,11 +1278,17 @@ export function Admin() {
                         <label htmlFor="img-upload" className="cursor-pointer flex flex-col items-center gap-2">
                           <Upload className="w-6 h-6 text-slate-400" />
                           <span className="text-sm text-slate-400">
-                            {imageFiles ? `${imageFiles.length} new file(s) selected` : editingProduct ? 'Upload additional images' : 'Click to select images'}
+                            {imageFiles ? `${imageFiles.length} image(s) ready — will upload to Cloudinary on save` : editingProduct ? 'Upload additional images' : 'Click to select images'}
                           </span>
-                          {imageFiles && <span className="text-xs text-slate-500">These will be added alongside kept images</span>}
+                          {imageFiles && <span className="text-xs text-slate-500">Images are uploaded directly — no size limits</span>}
                         </label>
                       </div>
+                      {uploadingImages && (
+                        <div className="mt-2 flex items-center gap-2 text-xs text-blue-300">
+                          <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                          {uploadProgress}
+                        </div>
+                      )}
                     </div>
 
                     {/* ── Variants ── */}
@@ -1407,8 +1446,8 @@ export function Admin() {
 
                   {/* Footer */}
                   <div className="flex gap-3 px-6 py-4 border-t border-slate-700 shrink-0">
-                    <Button onClick={handleSaveProduct} disabled={savingProduct} className="flex-1 bg-[#DC143C] hover:bg-[#b01030] text-white">
-                      {savingProduct ? 'Saving...' : editingProduct ? 'Update Product' : 'Create Product'}
+                    <Button onClick={handleSaveProduct} disabled={savingProduct || uploadingImages} className="flex-1 bg-[#DC143C] hover:bg-[#b01030] text-white">
+                      {uploadingImages ? uploadProgress : savingProduct ? 'Saving...' : editingProduct ? 'Update Product' : 'Create Product'}
                     </Button>
                     <Button variant="outline" onClick={() => setShowProductForm(false)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
                   </div>

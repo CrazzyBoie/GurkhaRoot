@@ -156,7 +156,8 @@ export const createProduct = async (req, res) => {
     if (typeof body.variants === 'string') body.variants = JSON.parse(body.variants);
 
     const data   = productSchema.parse(body);
-    const images = req.imageUrls || [];
+    // Images arrive as an array of Cloudinary URLs (uploaded directly from the browser)
+    const images = Array.isArray(body.images) ? body.images : (body.images ? [body.images] : []);
     const db     = getDb();
     const id     = newId();
     const now    = new Date().toISOString();
@@ -201,17 +202,12 @@ export const updateProduct = async (req, res) => {
     const snap = await db.collection('products').doc(id).get();
     if (!snap.exists) return res.status(404).json({ message: 'Product not found' });
 
-    const newImages  = req.imageUrls;
     const updateData = { ...data };
 
-    // Build final images array: kept existing images + any newly uploaded images
-    if (req.body.keptImages !== undefined) {
-      let keptImages = [];
-      try { keptImages = JSON.parse(req.body.keptImages); } catch { keptImages = []; }
-      updateData.images = [...keptImages, ...(newImages || [])];
-    } else if (newImages?.length) {
-      // Legacy: no keptImages sent — only update images if new files were uploaded
-      updateData.images = newImages;
+    // Images arrive as a pre-built array of Cloudinary URLs from the frontend
+    // (kept existing URLs + any newly uploaded URLs, already merged client-side)
+    if (Array.isArray(body.images)) {
+      updateData.images = body.images;
     }
     delete updateData.variants;
 
