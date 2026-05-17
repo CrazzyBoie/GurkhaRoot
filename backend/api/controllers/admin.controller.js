@@ -87,6 +87,94 @@ export const getRecentOrders = async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Failed to get recent orders' }); }
 };
 
+// ── getStockOverview ──────────────────────────────────────────────────────────
+// Returns every variant with: currentStock, damagedStock, soldQty (from orders)
+export const getStockOverview = async (req, res) => {
+  try {
+    const db = getDb();
+
+    // Fetch all variants, products, and completed (non-cancelled) order items
+    const [variantSnap, productSnap, orderSnap] = await Promise.all([
+      db.collection('variants').get(),
+      db.collection('products').get(),
+      db.collection('orders').where('status', '!=', 'CANCELLED').get(),
+    ]);
+
+    const variants = snapToArr(variantSnap);
+    const products = {};
+    productSnap.forEach(d => { products[d.id] = { id: d.id, ...d.data() }; });
+
+    // Tally sold quantities per variantId from order items
+    const soldByVariant = {};
+    snapToArr(orderSnap).forEach(order => {
+      (order.items || []).forEach(item => {
+        if (item.variantId) {
+          soldByVariant[item.variantId] = (soldByVariant[item.variantId] || 0) + (item.quantity || 0);
+        }
+      });
+    });
+
+    const result = variants.map(v => ({
+      id:           v.id,
+      productId:    v.productId,
+      productName:  products[v.productId]?.name || 'Unknown',
+      productImage: products[v.productId]?.images?.[0] || null,
+      size:         v.size,
+      color:        v.color,
+      colorHex:     v.colorHex,
+      stock:        v.stock,           // current available stock
+      damagedStock: v.damagedStock || 0,
+      soldQty:      soldByVariant[v.id] || 0,
+    }));
+
+    // Sort: low stock first
+    result.sort((a, b) => a.stock - b.stock);
+
+    res.json({ variants: result });
+  } catch (error) {
+    console.error('Stock overview error:', error);
+    res.status(500).json({ message: 'Failed to get stock overview' });
+  }
+};
+
+// ── updateDamagedStock ────────────────────────────────────────────────────────
+// PATCH /admin/variants/:id/damaged  { damagedQty: number }
+// Adds to damagedStock and subtracts from available stock so item is off the shop.
+export const updateDamagedStock = async (req, res) => {
+  try {
+    const { id }         = req.params;
+    const { damagedQty } = req.body;
+
+    if (typeof damagedQty !== 'number' || !Number.isInteger(damagedQty) || damagedQty < 0)
+      return res.status(400).json({ message: 'damagedQty must be a non-negative integer' });
+
+    const db   = getDb();
+    const snap = await db.collection('variants').doc(id).get();
+    if (!snap.exists) return res.status(404).json({ message: 'Variant not found' });
+
+    const variant     = { id: snap.id, ...snap.data() };
+    const currentDmg  = variant.damagedStock || 0;
+    const delta       = damagedQty - currentDmg;          // how much to add/remove
+    const newStock    = Math.max(0, (variant.stock || 0) - delta);
+
+    await snap.ref.update({ damagedStock: damagedQty, stock: newStock });
+
+    // Also keep embedded variants array in the parent product doc in sync
+    const pSnap = await db.collection('products').doc(variant.productId).get();
+    if (pSnap.exists) {
+      const embeddedVariants = (pSnap.data().variants || []).map(ev =>
+        ev.id === id ? { ...ev, damagedStock: damagedQty, stock: newStock } : ev
+      );
+      await pSnap.ref.update({ variants: embeddedVariants });
+    }
+
+    res.json({ message: 'Damaged stock updated', variant: { ...variant, damagedStock: damagedQty, stock: newStock } });
+  } catch (error) {
+    console.error('Update damaged stock error:', error);
+    res.status(500).json({ message: 'Failed to update damaged stock' });
+  }
+};
+
 export const updateUserRole = async (req, res) => {
   try {
     const { id } = req.params;

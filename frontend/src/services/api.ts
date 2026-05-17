@@ -200,6 +200,10 @@ export const adminApi = {
   getRecentOrders: (limit?: number) => api.get('/admin/recent-orders', { params: { limit } }),
   updateUserRole: (id: string, role: string) =>
     api.patch(`/admin/users/${id}/role`, { role }),
+  // Stock management
+  getStockOverview: () => api.get('/admin/stock-overview'),
+  updateDamagedStock: (variantId: string, damagedQty: number) =>
+    api.patch(`/admin/variants/${variantId}/damaged`, { damagedQty }),
 };
 
 export default api;

@@ -105,6 +105,16 @@ export function Admin() {
   const [savingBulk, setSavingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // ── Stock Management ──────────────────────────────────────────────────────
+  const [productSubTab, setProductSubTab] = useState<'list' | 'stock'>('list');
+  const [stockVariants, setStockVariants] = useState<any[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [stockSearch, setStockSearch] = useState('');
+  const [editingDamaged, setEditingDamaged] = useState<any>(null);
+  const [damagedQtyInput, setDamagedQtyInput] = useState('');
+  const [savingDamaged, setSavingDamaged] = useState(false);
+
   // ── Orders ─────────────────────────────────────────────────────────────────
   const [orders, setOrders] = useState<any[]>([]);
   const [orderPage, setOrderPage] = useState(1);
@@ -211,6 +221,40 @@ export function Admin() {
       setProductPages(res.data.pagination.pages);
     } catch {
       toast.error('Failed to load products');
+    }
+  };
+
+  const loadStockOverview = async () => {
+    setStockLoading(true);
+    try {
+      const res = await adminApi.getStockOverview();
+      setStockVariants(res.data.variants);
+    } catch {
+      toast.error('Failed to load stock overview');
+    } finally {
+      setStockLoading(false);
+    }
+  };
+
+  const openDamagedEditor = (variant: any) => {
+    setEditingDamaged(variant);
+    setDamagedQtyInput(String(variant.damagedStock || 0));
+  };
+
+  const handleSaveDamaged = async () => {
+    if (!editingDamaged) return;
+    const qty = parseInt(damagedQtyInput);
+    if (isNaN(qty) || qty < 0) { toast.error('Enter a valid non-negative number'); return; }
+    setSavingDamaged(true);
+    try {
+      await adminApi.updateDamagedStock(editingDamaged.id, qty);
+      toast.success('Damaged stock updated — shop stock adjusted automatically');
+      setEditingDamaged(null);
+      loadStockOverview();
+    } catch (e: any) {
+      toast.error(e.response?.data?.message || 'Failed to update damaged stock');
+    } finally {
+      setSavingDamaged(false);
     }
   };
 
@@ -884,7 +928,198 @@ export function Admin() {
         {/* ── Products ── */}
         {activeTab === 'products' && (
           <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+            {/* Sub-tab switcher */}
+            <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
+              <button
+                onClick={() => setProductSubTab('list')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${productSubTab === 'list' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}
+              >
+                <Package className="w-4 h-4" /> Products
+              </button>
+              <button
+                onClick={() => { setProductSubTab('stock'); loadStockOverview(); }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${productSubTab === 'stock' ? 'bg-[#DC143C] text-white' : 'text-blue-300/70 hover:text-white'}`}
+              >
+                <AlertTriangle className="w-4 h-4" /> Stock Overview
+              </button>
+            </div>
+
+            {/* ── Stock Overview sub-tab ── */}
+            {productSubTab === 'stock' && (
+              <div className="space-y-4">
+                {/* Summary cards */}
+                {!stockLoading && stockVariants.length > 0 && (() => {
+                  const totalAvailable = stockVariants.reduce((s, v) => s + v.stock, 0);
+                  const totalSold      = stockVariants.reduce((s, v) => s + v.soldQty, 0);
+                  const totalDamaged   = stockVariants.reduce((s, v) => s + v.damagedStock, 0);
+                  const outOfStock     = stockVariants.filter(v => v.stock === 0).length;
+                  return (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                      {[
+                        { label: 'Available Units', value: totalAvailable, color: 'text-green-400', sub: 'across all variants' },
+                        { label: 'Total Sold', value: totalSold, color: 'text-blue-400', sub: 'from fulfilled orders' },
+                        { label: 'Damaged / Written Off', value: totalDamaged, color: 'text-orange-400', sub: 'removed from shop' },
+                        { label: 'Out of Stock', value: outOfStock, color: 'text-red-400', sub: 'variants at zero' },
+                      ].map((m, i) => (
+                        <Card key={i} className="flag-card border-0 shadow-sm">
+                          <CardContent className="p-5">
+                            <p className="text-xs text-blue-300/70 mb-1">{m.label}</p>
+                            <p className={`text-2xl font-bold ${m.color}`}>{m.value}</p>
+                            <p className="text-xs text-blue-300/50 mt-1">{m.sub}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Filter + search bar */}
+                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+                  <div className="flex gap-2 flex-wrap">
+                    {([['all', 'All Variants'], ['low', 'Low Stock (< 5)'], ['out', 'Out of Stock']] as const).map(([key, label]) => (
+                      <button key={key} onClick={() => setStockFilter(key)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${stockFilter === key ? 'bg-[#DC143C] text-white' : 'bg-white/10 text-blue-200 hover:bg-white/20'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input placeholder="Search product or variant..." value={stockSearch} onChange={e => setStockSearch(e.target.value)} className="w-64" />
+                    <Button variant="outline" onClick={loadStockOverview} className="text-blue-200 border-white/20 hover:bg-white/10">Refresh</Button>
+                  </div>
+                </div>
+
+                {stockLoading ? (
+                  <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-[#DC143C] border-t-transparent rounded-full animate-spin" /></div>
+                ) : (
+                  <Card className="flag-card border-0 shadow-sm">
+                    <CardContent className="p-0">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="border-b border-white/10">
+                            <tr>
+                              <th className="text-left py-3 px-4 font-medium text-blue-200">Product</th>
+                              <th className="text-left py-3 px-4 font-medium text-blue-200">Variant</th>
+                              <th className="text-center py-3 px-4 font-medium text-green-400">Available</th>
+                              <th className="text-center py-3 px-4 font-medium text-blue-400">Sold</th>
+                              <th className="text-center py-3 px-4 font-medium text-orange-400">Damaged</th>
+                              <th className="text-center py-3 px-4 font-medium text-blue-200">Status</th>
+                              <th className="text-right py-3 px-4 font-medium text-blue-200">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/10">
+                            {stockVariants
+                              .filter(v => {
+                                if (stockFilter === 'low') return v.stock > 0 && v.stock < 5;
+                                if (stockFilter === 'out') return v.stock === 0;
+                                return true;
+                              })
+                              .filter(v => {
+                                if (!stockSearch.trim()) return true;
+                                const q = stockSearch.toLowerCase();
+                                return v.productName?.toLowerCase().includes(q) || v.size?.toLowerCase().includes(q) || v.color?.toLowerCase().includes(q);
+                              })
+                              .map(v => (
+                                <tr key={v.id} className="hover:bg-white/5">
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-3">
+                                      {v.productImage && <img src={v.productImage} alt={v.productName} className="w-9 h-9 object-cover rounded" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
+                                      <span className="font-medium text-white text-xs leading-tight max-w-[140px]">{v.productName}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-3 h-3 rounded-full border border-white/20 inline-block flex-shrink-0" style={{ background: v.colorHex || '#888' }} />
+                                      <span className="text-blue-200 text-xs">{v.size} / {v.color}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <span className={`font-bold text-base ${v.stock === 0 ? 'text-red-400' : v.stock < 5 ? 'text-yellow-400' : 'text-green-400'}`}>{v.stock}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-center text-blue-300 font-medium">{v.soldQty}</td>
+                                  <td className="py-3 px-4 text-center">
+                                    <span className={`font-medium ${v.damagedStock > 0 ? 'text-orange-400' : 'text-blue-300/50'}`}>{v.damagedStock}</span>
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    {v.stock === 0
+                                      ? <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">Out of Stock</span>
+                                      : v.stock < 5
+                                      ? <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full">Low Stock</span>
+                                      : <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">In Stock</span>
+                                    }
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    <Button variant="outline" size="sm" onClick={() => openDamagedEditor(v)} className="text-orange-400 border-orange-400/30 hover:bg-orange-400/10 text-xs">
+                                      Log Damage
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                            {stockVariants.filter(v => {
+                              if (stockFilter === 'low') return v.stock > 0 && v.stock < 5;
+                              if (stockFilter === 'out') return v.stock === 0;
+                              return true;
+                            }).filter(v => {
+                              if (!stockSearch.trim()) return true;
+                              const q = stockSearch.toLowerCase();
+                              return v.productName?.toLowerCase().includes(q) || v.size?.toLowerCase().includes(q) || v.color?.toLowerCase().includes(q);
+                            }).length === 0 && (
+                              <tr><td colSpan={7} className="py-10 text-center text-blue-300/50 text-sm">No variants match your filter.</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Damaged Stock modal */}
+                {editingDamaged && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditingDamaged(null)} />
+                    <div className="relative bg-[#0f172a] rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
+                      <div className="flex items-center justify-between p-6 border-b border-slate-700">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-orange-900 flex items-center justify-center"><AlertTriangle className="w-5 h-5 text-orange-400" /></div>
+                          <div>
+                            <h3 className="text-base font-semibold text-white">Log Damaged Stock</h3>
+                            <p className="text-xs text-slate-400">{editingDamaged.productName} — {editingDamaged.size} / {editingDamaged.color}</p>
+                          </div>
+                        </div>
+                        <button onClick={() => setEditingDamaged(null)} className="p-1.5 rounded-lg hover:bg-slate-700 transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                      </div>
+                      <div className="p-6 space-y-4">
+                        <div className="grid grid-cols-3 gap-3 text-center">
+                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Available</p><p className="text-lg font-bold text-green-400">{editingDamaged.stock}</p></div>
+                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Sold</p><p className="text-lg font-bold text-blue-400">{editingDamaged.soldQty}</p></div>
+                          <div className="bg-white/5 rounded-lg p-3"><p className="text-xs text-blue-300/70">Damaged</p><p className="text-lg font-bold text-orange-400">{editingDamaged.damagedStock}</p></div>
+                        </div>
+                        <div>
+                          <Label className="text-slate-300">Total Damaged Units</Label>
+                          <Input
+                            type="number" min="0"
+                            value={damagedQtyInput}
+                            onChange={e => setDamagedQtyInput(e.target.value)}
+                            className="mt-1 bg-slate-800 border-slate-600 text-white"
+                            placeholder="Enter total damaged units"
+                          />
+                          <p className="text-xs text-slate-500 mt-1.5">Set the <strong className="text-slate-300">total</strong> number of damaged units for this variant. The difference from the current value will be automatically deducted from shop-visible stock.</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3 p-6 border-t border-slate-700">
+                        <Button onClick={handleSaveDamaged} disabled={savingDamaged} className="flex-1 bg-orange-600 hover:bg-orange-700 text-white">{savingDamaged ? 'Saving...' : 'Update Damaged Stock'}</Button>
+                        <Button variant="outline" onClick={() => setEditingDamaged(null)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-800">Cancel</Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Products list sub-tab ── */}
+            {productSubTab === 'list' && (
+              <>
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
               <div className="flex gap-2 flex-1">
                 <Input placeholder="Search products..." value={productSearch} onChange={e => setProductSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadProducts()} className="max-w-xs" />
                 <Button variant="outline" onClick={loadProducts}>Search</Button>
@@ -1065,6 +1300,7 @@ export function Admin() {
                 )}
               </CardContent>
             </Card>
+            </>) } {/* end productSubTab === 'list' */}
           </div>
         )}
 
