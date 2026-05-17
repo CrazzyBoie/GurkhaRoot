@@ -62,6 +62,52 @@ const METHOD_ICONS: Record<string, React.ReactNode> = {
   overnight: <Clock className="w-4 h-4 text-purple-400" />,
 };
 
+// ── Color name lookup ──────────────────────────────────────────────────────────
+// Returns a human-readable name for a hex color using a curated palette +
+// a nearest-neighbour fallback so any arbitrary hex gets a sensible label.
+const COLOR_NAMES: [string, string][] = [
+  ['#000000','Black'],['#1a1a1a','Charcoal'],['#2F2F2F','Dark Charcoal'],['#808080','Gray'],
+  ['#A9A9A9','Dark Gray'],['#C0C0C0','Silver'],['#D3D3D3','Light Gray'],['#FFFFFF','White'],
+  ['#FFFAFA','Snow White'],['#F5F5F5','Off White'],['#F5F5DC','Beige'],['#FFF8DC','Cream'],
+  ['#FAEBD7','Antique White'],['#DC143C','Crimson'],['#8B0000','Dark Red'],['#FF0000','Red'],
+  ['#FF6B6B','Light Red'],['#FF4500','Orange Red'],['#FF8C00','Dark Orange'],['#FFA500','Orange'],
+  ['#FFD700','Gold'],['#FFFF00','Yellow'],['#F0E68C','Khaki'],['#006400','Dark Green'],
+  ['#228B22','Forest Green'],['#008000','Green'],['#90EE90','Light Green'],['#00FF00','Lime'],
+  ['#556B2F','Olive'],['#8FBC8F','Dark Sea Green'],['#2E8B57','Sea Green'],['#20B2AA','Light Sea Green'],
+  ['#008080','Teal'],['#00CED1','Dark Turquoise'],['#40E0D0','Turquoise'],['#00008B','Dark Blue'],
+  ['#00007C','Navy Blue'],['#000080','Navy'],['#0000CD','Medium Blue'],['#0000FF','Blue'],
+  ['#4169E1','Royal Blue'],['#6495ED','Cornflower Blue'],['#87CEEB','Sky Blue'],['#ADD8E6','Light Blue'],
+  ['#4B0082','Indigo'],['#8B008B','Dark Magenta'],['#800080','Purple'],['#9370DB','Medium Purple'],
+  ['#DDA0DD','Plum'],['#EE82EE','Violet'],['#FF00FF','Magenta'],['#FF69B4','Hot Pink'],
+  ['#FFB6C1','Light Pink'],['#FFC0CB','Pink'],['#8B4513','Saddle Brown'],['#A0522D','Sienna'],
+  ['#D2691E','Chocolate'],['#CD853F','Peru'],['#DEB887','Burlywood'],['#F4A460','Sandy Brown'],
+  ['#D2B48C','Tan'],['#C19A6B','Camel'],['#2F4F4F','Dark Slate Gray'],['#708090','Slate Gray'],
+  ['#B8860B','Dark Goldenrod'],['#DAA520','Goldenrod'],['#BDB76B','Dark Khaki'],['#6B8E23','Olive Drab'],
+];
+
+function hexToColorName(hex: string): string {
+  const h = hex.trim().toUpperCase();
+  // Exact match first
+  const exact = COLOR_NAMES.find(([c]) => c.toUpperCase() === h);
+  if (exact) return exact[1];
+  // Parse to RGB
+  const r = parseInt(h.slice(1, 3), 16);
+  const g = parseInt(h.slice(3, 5), 16);
+  const b = parseInt(h.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '';
+  // Nearest colour by squared Euclidean distance
+  let best = COLOR_NAMES[0][1];
+  let bestDist = Infinity;
+  for (const [c, name] of COLOR_NAMES) {
+    const cr = parseInt(c.slice(1, 3), 16);
+    const cg = parseInt(c.slice(3, 5), 16);
+    const cb = parseInt(c.slice(5, 7), 16);
+    const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+    if (dist < bestDist) { bestDist = dist; best = name; }
+  }
+  return best;
+}
+
 export function Admin() {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
@@ -1251,9 +1297,21 @@ export function Admin() {
                         {productForm.variants.map((v, i) => (
                           <div key={i} className="grid gap-2 items-start p-3 bg-slate-800/40 border border-slate-700 rounded-lg" style={{ gridTemplateColumns: '1fr 1fr auto auto' }}>
                             <Input
-                              placeholder="Size (e.g. M)"
+                              placeholder={stockMode === 'bulk' ? 'Sizes e.g. S, M, L' : 'Size (e.g. M)'}
                               value={v.size}
                               onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], size: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                              onBlur={e => {
+                                if (stockMode !== 'bulk') return;
+                                const raw = e.target.value;
+                                const sizes = raw.split(',').map(s => s.trim()).filter(Boolean);
+                                if (sizes.length <= 1) return;
+                                // Expand: replace this row with one row per size, inheriting color + colorHex
+                                const vs = [...productForm.variants];
+                                const base = vs[i];
+                                const newRows = sizes.map(sz => ({ ...base, size: sz }));
+                                vs.splice(i, 1, ...newRows);
+                                setProductForm({ ...productForm, variants: vs });
+                              }}
                               className="bg-slate-800 border-slate-600 text-white text-sm h-9"
                             />
                             {/* Color field with professional picker */}
@@ -1284,13 +1342,13 @@ export function Admin() {
                                     <input
                                       type="color"
                                       value={v.colorHex}
-                                      onChange={e => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: e.target.value }; setProductForm({ ...productForm, variants: vs }); }}
+                                      onChange={e => { const hex = e.target.value; const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex, color: hexToColorName(hex) }; setProductForm({ ...productForm, variants: vs }); }}
                                       className="w-8 h-8 rounded cursor-pointer border-0 bg-transparent"
                                     />
                                     <input
                                       type="text"
                                       value={v.colorHex}
-                                      onChange={e => { const hex = e.target.value; if (/^#[0-9A-Fa-f]{0,6}$/.test(hex)) { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex }; setProductForm({ ...productForm, variants: vs }); } }}
+                                      onChange={e => { const hex = e.target.value; if (/^#[0-9A-Fa-f]{0,6}$/.test(hex)) { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex, ...(hex.length === 7 ? { color: hexToColorName(hex) } : {}) }; setProductForm({ ...productForm, variants: vs }); } }}
                                       className="flex-1 bg-slate-700 border border-slate-500 rounded px-2 py-1 text-xs text-white font-mono"
                                       placeholder="#000000"
                                     />
@@ -1308,7 +1366,7 @@ export function Admin() {
                                       <button
                                         key={hex}
                                         type="button"
-                                        onClick={() => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex }; setProductForm({ ...productForm, variants: vs }); setColorPickerOpen(null); }}
+                                        onClick={() => { const vs = [...productForm.variants]; vs[i] = { ...vs[i], colorHex: hex, color: hexToColorName(hex) }; setProductForm({ ...productForm, variants: vs }); setColorPickerOpen(null); }}
                                         className="w-5 h-5 rounded border border-slate-600 hover:scale-125 transition-transform"
                                         style={{ backgroundColor: hex }}
                                         title={hex}
